@@ -219,7 +219,7 @@ Buck2 shines when it comes to rebuilds: the dependency graph is cached
 in memory, and it knows when build steps can be omitted because the
 inputs haven't changed.
 
-![Buck2 vs Cabal build times](https://raw.githubusercontent.com/simonmar/haskell-buck2/refs/heads/master/perf-chart.svg)
+![Buck2 vs Cabal build times](https://raw.githubusercontent.com/simonmar/cabal-buck2/refs/heads/master/perf-chart.svg)
 
 **Caveats**
 
