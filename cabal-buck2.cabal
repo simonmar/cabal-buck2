@@ -12,6 +12,8 @@ description:
   you to use [Buck2](https://buck2.build) as the build system for your
   Cabal project. For more details see the package README.
 
+tested-with:        GHC==9.14.1, GHC==9.12.4, GHC==9.10.3, GHC==9.8.2, GHC==9.6.4, GHC==9.4.8
+
 extra-doc-files:    README.md
 
 homepage:            https://github.com/simonmar/cabal-buck2
