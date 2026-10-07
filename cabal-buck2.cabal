@@ -1,4 +1,4 @@
-cabal-version:      2.2
+cabal-version:      3.8
 name:               cabal-buck2
 version:            0.1.0.0
 synopsis:           Build a Cabal project with buck2 (the `cabal buck2` external command)
@@ -15,6 +15,15 @@ description:
 tested-with:        GHC==9.14.1, GHC==9.12.4, GHC==9.10.3, GHC==9.8.2, GHC==9.6.4, GHC==9.4.8
 
 extra-doc-files:    README.md
+extra-source-files:
+  test/fixtures/**/*.c
+  test/fixtures/**/*.cabal
+  test/fixtures/**/*.h
+  test/fixtures/**/*.hs
+  test/fixtures/**/*.project
+  test/fixtures/**/.buckconfig
+  test/fixtures/**/.gitkeep
+  test/fixtures/**/PACKAGE
 
 homepage:            https://github.com/simonmar/cabal-buck2
 bug-reports:         https://github.com/simonmar/cabal-buck2/issues
@@ -66,3 +75,22 @@ executable cabal-buck2
     , Cabal
     , cabal-buck2
     , cabal-install
+
+-- `cabal test` runs `cabal-buck2` on the projects in `test/fixtures`
+-- and checks the files it generates. The tests don't need buck2, and
+-- use a private `CABAL_DIR` and the packages installed with GHC only
+-- (the fixtures set `active-repositories: :none`), so they need no
+-- network access.
+
+test-suite fixtures
+  import:             warnings
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+  hs-source-dirs:     test
+  default-language:   GHC2021
+  build-tool-depends: cabal-buck2:cabal-buck2
+  build-depends:
+    , base
+    , directory
+    , filepath
+    , process
