@@ -71,7 +71,7 @@ executable cabal-buck2
   hs-source-dirs:   app
   default-language: GHC2021
   build-depends:
-    , base
+    , base          >=4.17 && <4.24
     , Cabal
     , cabal-buck2
     , cabal-install
@@ -90,7 +90,7 @@ test-suite fixtures
   default-language:   GHC2021
   build-tool-depends: cabal-buck2:cabal-buck2
   build-depends:
-    , base
+    , base          >=4.17 && <4.24
     , directory
     , filepath
     , process
