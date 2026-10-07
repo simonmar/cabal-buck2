@@ -1,0 +1,58 @@
+cabal-version:      2.2
+name:               cabal-buck2
+version:            0.1.0.0
+synopsis:           Build a Cabal project with buck2 (the `cabal buck2` external command)
+license:            BSD-3-Clause
+build-type:         Simple
+maintainer:         marlowsd@gmail.com
+category:           Build Tool
+description:
+  This is a [Cabal external command](https://cabal.readthedocs.io/en/stable/external-commands.html) `cabal buck2` that allows
+  you to use [Buck2](https://buck2.build) as the build system for your
+  Cabal project. For more details see the package README.
+
+extra-doc-files:    README.md, perf-chart.svg
+
+common warnings
+  ghc-options: -Wall -Wcompat -Wno-unused-do-bind
+
+library
+  import:           warnings
+  hs-source-dirs:   src
+  default-language: GHC2021
+  default-extensions: TypeOperators, NoImportQualifiedPost
+  exposed-modules:
+    Distribution.Client.CmdBuck2
+    Distribution.Client.Buck2.BuildDependencies
+    Distribution.Client.Buck2.Configure
+    Distribution.Client.Buck2.Generate
+    Distribution.Client.Buck2.LocalPackages
+    Distribution.Client.Buck2.Prebuilt
+    Distribution.Client.Buck2.Schedule
+    Distribution.Client.Buck2.Setup
+    Distribution.Client.Buck2.Spec
+    Distribution.Client.Buck2.Starlark
+    Distribution.Client.Buck2.Unpack
+    Distribution.Client.Buck2.Write
+  build-depends:
+    , async         >=2.2.6 && <2.3
+    , base          >=4.17 && <4.24
+    , bytestring    >=0.11.5 && <0.12
+    , Cabal         ==3.18.*
+    , Cabal-syntax  ==3.18.*
+    , cabal-install ==3.18.1.0
+    , containers    >=0.6.7 && <0.7
+    , directory     >=1.3.8 && <1.4
+    , filepath      >=1.4.301 && <1.5
+    , stm           >=2.5.1 && <2.6
+
+executable cabal-buck2
+  import:           warnings
+  main-is:          Main.hs
+  hs-source-dirs:   app
+  default-language: GHC2021
+  build-depends:
+    , base
+    , Cabal
+    , cabal-buck2
+    , cabal-install
