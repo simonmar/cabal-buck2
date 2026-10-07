@@ -15,7 +15,7 @@ import System.Directory
   , listDirectory
   , removeDirectoryRecursive
   )
-import System.Environment (getEnvironment)
+import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..), exitFailure)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
@@ -65,13 +65,16 @@ runTest exe (name, test) = do
       cleanup dir
       copyTree ("test" </> "fixtures" </> fixture) (dir </> "project")
       env <- getEnvironment
+      -- The compiler to use: $HC if it's set (as haskell-ci does), otherwise
+      -- whatever `ghc` is on the PATH.
+      compilerArgs <- maybe [] (\hc -> ["-w", hc]) <$> lookupEnv "HC"
       -- A private cabal directory, so that the user's store and config are
       -- neither used nor changed.
       let cabalDir = dir </> "cabal-dir"
           run args = do
             (code, out, err) <-
               readCreateProcessWithExitCode
-                (proc exe args){cwd = Just (dir </> "project"), env = Just (("CABAL_DIR", cabalDir) : env)}
+                (proc exe (compilerArgs ++ args)){cwd = Just (dir </> "project"), env = Just (("CABAL_DIR", cabalDir) : env)}
                 ""
             return (code, out ++ err)
       return Project{projectDir = dir </> "project", runBuck2 = run}
