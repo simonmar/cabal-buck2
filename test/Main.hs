@@ -6,6 +6,8 @@ module Main (main) where
 import Control.Exception (SomeException, bracket, displayException, try)
 import Control.Monad (forM_, unless, when)
 import Data.List (isInfixOf)
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.Map as Map
 import System.Directory
   ( copyFile
   , createDirectoryIfMissing
@@ -21,14 +23,31 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, getCurrentPid)
 
+import Distribution.Client.Buck2.Fingerprint (fingerprintOf)
+
 main :: IO ()
 main = do
   exe <- maybe (fail "cabal-buck2 not found on PATH") return =<< findExecutable "cabal-buck2"
   results <- mapM (runTest exe) tests
-  let failures = [name | (name, False) <- zip (map fst tests) results]
+  unitResults <- mapM runUnitTest unitTests
+  let failures =
+        [name | (name, False) <- zip (map fst tests) results]
+          ++ [name | (name, False) <- zip (map fst unitTests) unitResults]
   unless (null failures) $ do
     hPutStrLn stderr $ "FAILED: " ++ unwords failures
     exitFailure
+
+unitTests :: [(String, IO ())]
+unitTests = [("fingerprint", fingerprint)]
+
+runUnitTest :: (String, IO ()) -> IO Bool
+runUnitTest (name, test) = do
+  r <- try test
+  case r of
+    Right () -> putStrLn ("PASS " ++ name) >> return True
+    Left e -> do
+      hPutStrLn stderr ("FAIL " ++ name ++ ": " ++ displayException (e :: SomeException))
+      return False
 
 tests :: [(String, Project -> IO ())]
 tests =
@@ -125,6 +144,32 @@ assertNotContains what needle haystack =
 
 -- * Tests
 
+-- | The fingerprint of the GHC installation, which keeps the buck2 action
+-- cache from serving the output of a different GHC.
+fingerprint :: IO ()
+fingerprint = do
+  let props = Map.fromList [("Project version", "9.6.7"), ("Target platform", "x86_64-unknown-linux"), ("Project Git commit id", "2b22b6ae69c94e721fde8af0108eb0feed97cc82"), ("RTS ways", "debug thr")]
+      conf abi = BS8.pack ("name: base\nversion: 4.18\nabi: " ++ abi ++ "\nid: base-4.18\n")
+      confs = [("base-4.18.conf", conf "aaaa"), ("ghc-prim-0.10.conf", conf "bbbb")]
+      fp = fingerprintOf props confs
+  -- Readable: version, platform and source commit come first.
+  assertContains "fingerprint" "9.6.7-x86_64-unknown-linux-2b22b6ae-" fp
+  -- It doesn't depend on the order of the files.
+  assertEqual "fingerprint of reordered confs" fp (fingerprintOf props (reverse confs))
+  -- It changes with the interface hash of any package, with the GHC commit,
+  -- and with the build properties.
+  assertDiffers "changed abi" fp (fingerprintOf props [("base-4.18.conf", conf "aaaa"), ("ghc-prim-0.10.conf", conf "cccc")])
+  assertDiffers "changed commit" fp (fingerprintOf (Map.insert "Project Git commit id" "3b22b6ae69c9" props) confs)
+  assertDiffers "changed RTS ways" fp (fingerprintOf (Map.insert "RTS ways" "debug thr dyn" props) confs)
+  -- Properties it doesn't use don't matter.
+  assertEqual "unused property" fp (fingerprintOf (Map.insert "C compiler command" "gcc" props) confs)
+
+assertEqual :: String -> String -> String -> IO ()
+assertEqual what a b = unless (a == b) $ failure (what ++ ": " ++ show a ++ " /= " ++ show b)
+
+assertDiffers :: String -> String -> String -> IO ()
+assertDiffers what a b = when (a == b) $ failure (what ++ ": expected a different fingerprint, got " ++ show a)
+
 -- | The main mapping rules, end to end: a plain library (lib-pkg), a second
 -- package (exe-pkg) whose library depends on it, an executable with
 -- @c-sources@, an exitcode-stdio-1.0 test-suite and a benchmark (both only
@@ -134,6 +179,14 @@ assertNotContains what needle haystack =
 basic :: Project -> IO ()
 basic project = do
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
+
+  -- The GHC fingerprint is generated into tools.bzl, and is stable.
+  let toolsPath = "third-party" </> "haskell" </> "tools.bzl"
+  tools <- readIn project toolsPath
+  assertContains toolsPath "GHC_FINGERPRINT = \"" tools
+  _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
+  tools' <- readIn project toolsPath
+  assertEqual "tools.bzl after a second run" tools tools'
 
   -- The generated file is a build spec - a plain dict describing each
   -- component as Cabal sees it - interpreted by buck2/cabal.bzl, which

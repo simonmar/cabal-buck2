@@ -44,6 +44,7 @@ library
     Distribution.Client.CmdBuck2
     Distribution.Client.Buck2.BuildDependencies
     Distribution.Client.Buck2.Configure
+    Distribution.Client.Buck2.Fingerprint
     Distribution.Client.Buck2.Generate
     Distribution.Client.Buck2.LocalPackages
     Distribution.Client.Buck2.Prebuilt
@@ -91,6 +92,9 @@ test-suite fixtures
   build-tool-depends: cabal-buck2:cabal-buck2
   build-depends:
     , base          >=4.17 && <4.24
+    , bytestring    >=0.11.5 && <0.12
+    , cabal-buck2
+    , containers    >=0.6.7 && <0.7
     , directory
     , filepath
     , process
