@@ -4,14 +4,22 @@ version:            0.1.0.0
 synopsis:           Build a Cabal project with buck2 (the `cabal buck2` external command)
 license:            BSD-3-Clause
 build-type:         Simple
-maintainer:         marlowsd@gmail.com
+author:             Simon Marlow <marlowsd@gmail.com>
+maintainer:         Simon Marlow <marlowsd@gmail.com>
 category:           Build Tool
 description:
   This is a [Cabal external command](https://cabal.readthedocs.io/en/stable/external-commands.html) `cabal buck2` that allows
   you to use [Buck2](https://buck2.build) as the build system for your
   Cabal project. For more details see the package README.
 
-extra-doc-files:    README.md, perf-chart.svg
+extra-doc-files:    README.md
+
+homepage:            https://github.com/simonmar/cabal-buck2
+bug-reports:         https://github.com/simonmar/cabal-buck2/issues
+
+source-repository head
+    type: git
+    location: https://github.com/simonmar/cabal-buck2.git
 
 common warnings
   ghc-options: -Wall -Wcompat -Wno-unused-do-bind
