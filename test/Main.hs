@@ -68,15 +68,21 @@ runTest exe (name, test) = do
       -- The compiler to use: $HC if it's set (as haskell-ci does), otherwise
       -- whatever `ghc` is on the PATH.
       compilerArgs <- maybe [] (\hc -> ["-w", hc]) <$> lookupEnv "HC"
-      -- A private cabal directory, so that the user's store and config are
-      -- neither used nor changed.
+      -- A private cabal directory and config, so that the user's store and
+      -- config (which $CABAL_DIR and $CABAL_CONFIG may point to, as in
+      -- haskell-ci) are neither used nor changed.
       let cabalDir = dir </> "cabal-dir"
+          cabalEnv =
+            [("CABAL_DIR", cabalDir), ("CABAL_CONFIG", cabalDir </> "config")]
+              ++ [kv | kv@(k, _) <- env, k `notElem` ["CABAL_DIR", "CABAL_CONFIG"]]
           run args = do
             (code, out, err) <-
               readCreateProcessWithExitCode
-                (proc exe (compilerArgs ++ args)){cwd = Just (dir </> "project"), env = Just (("CABAL_DIR", cabalDir) : env)}
+                (proc exe (compilerArgs ++ args)){cwd = Just (dir </> "project"), env = Just cabalEnv}
                 ""
             return (code, out ++ err)
+      createDirectoryIfMissing True cabalDir
+      writeFile (cabalDir </> "config") ""
       return Project{projectDir = dir </> "project", runBuck2 = run}
     cleanup dir = do
       exists <- doesDirectoryExist dir
