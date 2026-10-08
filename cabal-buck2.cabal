@@ -17,6 +17,7 @@ tested-with:        GHC==9.14.1, GHC==9.12.4, GHC==9.10.3, GHC==9.8.2, GHC==9.6.
 extra-doc-files:    README.md, changelog.md
 extra-source-files:
   test/fixtures/**/*.c
+  test/fixtures/**/*.cmm
   test/fixtures/**/*.cabal
   test/fixtures/**/*.h
   test/fixtures/**/*.hs

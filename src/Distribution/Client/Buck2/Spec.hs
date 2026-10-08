@@ -71,6 +71,7 @@ data SpecComponent = SpecComponent
   , scCSources :: [FilePath]
   , scCxxSources :: [FilePath]
   , scCxxOptions :: [String]
+  , scCmmSources :: [FilePath]
   , scIncludeDirs :: [FilePath]
   , scGeneratedIncludeDirs :: [FilePath]
   -- ^ Directories, relative to the project root, with headers that the

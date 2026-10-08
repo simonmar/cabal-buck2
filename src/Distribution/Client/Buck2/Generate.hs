@@ -397,8 +397,7 @@ unsupportedSources :: BuildInfo -> [String]
 unsupportedSources bi =
   [ what
   | (what, files) <-
-      [ ("cmm-sources", map getSymbolicPath (cmmSources bi))
-      , ("asm-sources", map getSymbolicPath (asmSources bi))
+      [ ("asm-sources", map getSymbolicPath (asmSources bi))
       , ("js-sources", map getSymbolicPath (jsSources bi))
       ]
   , not (null files)
@@ -483,6 +482,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
+    , scCmmSources = map getSymbolicPath (cmmSources bi)
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
     , scGeneratedIncludeDirs = []

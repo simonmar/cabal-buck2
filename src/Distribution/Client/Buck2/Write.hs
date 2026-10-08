@@ -234,6 +234,7 @@ componentValue c =
       ++ listField "c_sources" (scCSources c)
       ++ listField "cxx_sources" (scCxxSources c)
       ++ listField "cxx_options" (scCxxOptions c)
+      ++ listField "cmm_sources" (scCmmSources c)
       ++ listField "include_dirs" (scIncludeDirs c)
       ++ listField "generated_include_dirs" (scGeneratedIncludeDirs c)
       ++ listField "pkgconfig" (scPkgconfig c)

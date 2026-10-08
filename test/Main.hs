@@ -351,6 +351,8 @@ sourceDeps project = do
   assertContains depBzlPath "'dir': 'dist-newstyle/src/dep-1.0'" depBzl
   -- Its data files are recorded, for the tools that read them.
   assertContains depBzlPath "'data/*.txt'" depBzl
+  assertContains depBzlPath "'cmm_sources'" depBzl
+  assertContains depBzlPath "'cmm/Dep.cmm'" depBzl
   appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
   assertContains "app/BUCK.cabal.bzl" "'dir': 'dist-newstyle/src/dep-1.0'" appBzl
 
