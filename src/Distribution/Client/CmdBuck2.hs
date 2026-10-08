@@ -62,6 +62,13 @@ import Distribution.Simple.Utils (die', notice)
 import Distribution.Verbosity (normal)
 
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
+import Distribution.Client.Buck2.Cache
+  ( Buck2Flags
+  , buck2FlagOptions
+  , cacheSetting
+  , configureCache
+  , defaultBuck2Flags
+  )
 import Distribution.Client.Buck2.Configure (configureComponents)
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
@@ -76,7 +83,7 @@ import Distribution.Client.Buck2.Setup
 import Distribution.Client.Buck2.Write (writeAllPackages)
 
 -- | The @cabal buck2@ CLI command
-buck2Command :: CommandUI (NixStyleFlags ())
+buck2Command :: CommandUI (NixStyleFlags Buck2Flags)
 buck2Command =
   CommandUI
     { commandName = "buck2"
@@ -94,15 +101,16 @@ buck2Command =
           ++ "configure` (-f, --enable-profiling, --enable-tests, etc.) are "
           ++ "honoured here too, and apply to the dependency build."
     , commandNotes = Nothing
-    , commandDefaultFlags = defaultNixStyleFlags ()
-    , commandOptions = nixStyleOptions (const [])
+    , commandDefaultFlags = defaultNixStyleFlags defaultBuck2Flags
+    , commandOptions = nixStyleOptions buck2FlagOptions
     }
 
 -- | Implement @cabal buck2@
-buck2Action :: NixStyleFlags () -> [String] -> GlobalFlags -> IO ()
+buck2Action :: NixStyleFlags Buck2Flags -> [String] -> GlobalFlags -> IO ()
 buck2Action flags extraArgs globalFlags = do
   unless (null extraArgs) $
     die' verbosity ("'cabal buck2' doesn't take any extra arguments: " ++ unwords extraArgs)
+  cache <- either (die' verbosity) return (cacheSetting (extraFlags flags))
 
   withContextAndSelectors verbosity RejectNoTargets Nothing depsFlags ["all"] globalFlags BuildCommand $
     \targetCtx ctx targetSelectors -> do
@@ -117,6 +125,7 @@ buck2Action flags extraArgs globalFlags = do
       buildCtx <- buildDependencies verbosity baseCtx targetSelectors
 
       ensureBuckconfigAndPackage verbosity projectRoot
+      configureCache verbosity projectRoot cache
 
       localPkgs <- builtLocalPackages verbosity (distDirLayout baseCtx) (elaboratedPlanOriginal buildCtx)
 

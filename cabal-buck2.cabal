@@ -43,6 +43,7 @@ library
   exposed-modules:
     Distribution.Client.CmdBuck2
     Distribution.Client.Buck2.BuildDependencies
+    Distribution.Client.Buck2.Cache
     Distribution.Client.Buck2.Configure
     Distribution.Client.Buck2.Fingerprint
     Distribution.Client.Buck2.Generate

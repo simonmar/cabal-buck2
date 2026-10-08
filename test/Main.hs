@@ -23,6 +23,7 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, getCurrentPid)
 
+import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
 import Distribution.Client.Buck2.Fingerprint (fingerprintOf)
 
 main :: IO ()
@@ -38,7 +39,7 @@ main = do
     exitFailure
 
 unitTests :: [(String, IO ())]
-unitTests = [("fingerprint", fingerprint)]
+unitTests = [("fingerprint", fingerprint), ("splice-block", spliceBlockTest)]
 
 runUnitTest :: (String, IO ()) -> IO Bool
 runUnitTest (name, test) = do
@@ -54,6 +55,7 @@ tests =
   [ ("basic", basic)
   , ("disabled-stanzas", disabledStanzas)
   , ("missing-module", missingModule)
+  , ("cache-config", cacheConfig)
   ]
 
 -- | A copy of a fixture project, and how to run @cabal-buck2@ in it.
@@ -79,6 +81,7 @@ runTest exe (name, test) = do
     -- The fixture is named after the test, except for tests that reuse one.
     fixture = case name of
       "disabled-stanzas" -> "basic"
+      "cache-config" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir
@@ -163,6 +166,30 @@ fingerprint = do
   assertDiffers "changed RTS ways" fp (fingerprintOf (Map.insert "RTS ways" "debug thr dyn" props) confs)
   -- Properties it doesn't use don't matter.
   assertEqual "unused property" fp (fingerprintOf (Map.insert "C compiler command" "gcc" props) confs)
+
+-- | Adding, changing and removing the block that @--cache@ puts in a config
+-- file, without touching anything else in it.
+spliceBlockTest :: IO ()
+spliceBlockTest = do
+  let user = "[cells]\n  root = .\n\n[build]\n  threads = 4\n"
+      add address = spliceBlock (Just (cacheBlock address))
+      once = add "grpc://a:1" user
+  -- The user's part is kept, and the block comes after it.
+  assertContains "added block" "[cells]\n  root = .\n\n[build]\n  threads = 4\n\n# >>> cabal buck2: cache" once
+  assertContains "added block" "action_cache_address = grpc://a:1" once
+  -- Doing it again changes nothing; a new address replaces the old one.
+  assertEqual "idempotent" once (add "grpc://a:1" once)
+  let changed = add "grpc://b:2" once
+  assertContains "changed address" "action_cache_address = grpc://b:2" changed
+  assertNotContains "changed address" "grpc://a:1" changed
+  -- Removing it gives back the original, and removing again is a no-op.
+  let removed = spliceBlock Nothing changed
+  assertEqual "removed" user removed
+  assertEqual "removed twice" user (spliceBlock Nothing removed)
+  -- A file without a trailing newline or blocks is left alone when there is nothing to remove.
+  assertEqual "nothing to remove" "[a]" (spliceBlock Nothing "[a]")
+  -- Text after the block is kept too.
+  assertContains "text after the block" "[later]" (add "grpc://c:3" (once ++ "[later]\n"))
 
 assertEqual :: String -> String -> String -> IO ()
 assertEqual what a b = unless (a == b) $ failure (what ++ ": " ++ show a ++ " /= " ++ show b)
@@ -278,6 +305,42 @@ basic project = do
   ab "out = 'Paths_exe_pkg.hs'" autogenBuck
   ab "out = 'cabal_macros.h'" autogenBuck
   ab "out = 'Main.hs'" autogenBuck
+
+-- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
+-- kept by later runs without the flag, and @--no-cache@ removes.
+cacheConfig :: Project -> IO ()
+cacheConfig project = do
+  let buckconfig = ".buckconfig"
+      block = "# >>> cabal buck2: cache"
+  before <- readIn project buckconfig
+  assertNotContains buckconfig block before
+
+  _ <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  withCache <- readIn project buckconfig
+  assertContains buckconfig "[cabal_buck2]\n  cache = true" withCache
+  assertContains buckconfig "default_allow_cache_upload = true" withCache
+  assertContains buckconfig "action_cache_address = grpc://127.0.0.1:9092" withCache
+  assertContains buckconfig "tls = false" withCache
+  -- What was there is kept.
+  assertContains buckconfig (take 40 before) withCache
+
+  -- Later runs leave it alone.
+  _ <- buck2 project []
+  again <- readIn project buckconfig
+  assertEqual "after a run without --cache" withCache again
+
+  -- Removing it restores the original file.
+  _ <- buck2 project ["--no-cache"]
+  without <- readIn project buckconfig
+  assertEqual "after --no-cache" before without
+
+  -- Mistakes are reported.
+  (code, out) <- runBuck2 project ["--cache=http://example.org"]
+  when (code == ExitSuccess) $ failure "--cache=http://... was accepted"
+  assertContains "bad address" "grpc://" out
+  (code', out') <- runBuck2 project ["--cache=grpc://a:1", "--no-cache"]
+  when (code' == ExitSuccess) $ failure "--cache with --no-cache was accepted"
+  assertContains "both flags" "can't be used together" out'
 
 -- | A plain run, without @--enable-tests@ or @--enable-benchmarks@, must
 -- succeed even though the package has test-suites and a benchmark. The

@@ -208,6 +208,39 @@ buck2 build my-package:my-program -m opt
 
 There are other build options that can be selected in a similar way, such as `-m prof` to enable profiling. See `constraints/BUCK` for details.
 
+# Sharing build results (a build cache)
+
+By default buck2 keeps nothing between runs of its daemon, nor between
+checkouts: after `buck2 kill`, or in a new worktree, everything is built again.
+A cache of build results fixes that. buck2 can use any server that implements
+the Bazel remote execution API's action cache and CAS, **only to look results
+up and store them: nothing is run remotely**. For example
+[bazel-remote](https://github.com/buchgr/bazel-remote):
+
+```
+bazel-remote --dir ~/.cache/buck2 --max_size 20 --grpc_address 127.0.0.1:9092 --http_address 127.0.0.1:8080
+cabal buck2 --cache=grpc://127.0.0.1:9092
+```
+
+`--cache` adds a block to `.buckconfig` (between `# >>> cabal buck2: cache`
+and `# <<< cabal buck2: cache <<<`; anything else in the file is left alone),
+which later runs keep. `cabal buck2 --no-cache` removes it. In a test with
+`persistent`, a build in a fresh directory went from 33 s to about 1 s.
+
+Things to know:
+
+* **The server has to be running.** When it isn't, buck2 retries connecting
+  for about 45 seconds on each build before carrying on without the cache.
+  Use `--no-cache` if you stop using it.
+* The key of a cached result includes the command line, the environment and
+  the contents of the inputs. It includes the exact packages from the Cabal
+  store (their unit ids) and a fingerprint of the GHC installation (its
+  version, platform, source commit and the interface hashes of its boot
+  packages), but **not** the C compiler, the linker or system libraries. That
+  is fine on one machine; sharing a cache between machines with different
+  system toolchains is not safe yet.
+* Linking C/C++ code, and `pkg-config` queries, are not cached.
+
 # Performance
 
 I ran some experiments building the Cabal project itself - 16 packages
