@@ -23,15 +23,15 @@ import Distribution.Client.ProjectPlanning hiding
 
 import Distribution.Simple.Utils (dieWithException, notice)
 
-import Distribution.Client.Buck2.LocalPackages (isBuiltLocally)
+import Distribution.Client.Buck2.LocalPackages (DependencyMode, builtLocalElabs, isBuiltLocally, planElab)
 import Distribution.Client.Buck2.Unpack (unpackInplaceSources)
 import Distribution.Client.Errors (CabalInstallException (ReportCannotPruneDependencies))
 
 -- | Build every dependency of the selected targets, excluding packages
 -- that are forced to build locally (see 'isBuiltLocally').
 -- This is similar but not quite the same as the code for @CmdBuild@.
-buildDependencies :: Verbosity -> ProjectBaseContext -> [TargetSelector] -> IO ProjectBuildContext
-buildDependencies verbosity baseCtx targetSelectors = do
+buildDependencies :: Verbosity -> DependencyMode -> ProjectBaseContext -> [TargetSelector] -> IO ProjectBuildContext
+buildDependencies verbosity mode baseCtx targetSelectors = do
   buildCtx@ProjectBuildContext{elaboratedPlanOriginal, elaboratedShared} <-
     runProjectPreBuildPhase verbosity baseCtx $ \elaboratedPlan -> do
       targets <-
@@ -47,8 +47,8 @@ buildDependencies verbosity baseCtx targetSelectors = do
             Map.keysSet targets
               <> Set.fromList
                 [ elabUnitId elab
-                | InstallPlan.Configured elab <- InstallPlan.toList elaboratedPlan'
-                , isBuiltLocally elab
+                | Just elab <- map planElab (InstallPlan.toList elaboratedPlan')
+                , isBuiltLocally mode elab
                 ]
       elaboratedPlan'' <-
         either (dieWithException verbosity . ReportCannotPruneDependencies . renderCannotPruneDependencies) return $
@@ -66,8 +66,7 @@ buildDependencies verbosity baseCtx targetSelectors = do
     elaboratedShared
     (projectConfigWithBuilderRepoContext verbosity (buildSettings baseCtx))
     [ elab
-    | InstallPlan.Configured elab <- InstallPlan.toList elaboratedPlanOriginal
-    , isBuiltLocally elab
+    | elab <- builtLocalElabs mode elaboratedPlanOriginal
     , not (elabLocalToProject elab)
     ]
   return buildCtx

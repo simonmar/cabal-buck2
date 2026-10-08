@@ -21,7 +21,7 @@ import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..), exitFailure)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
-import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, getCurrentPid)
+import System.Process (CreateProcess (..), callProcess, getCurrentPid, proc, readCreateProcessWithExitCode)
 
 import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
 import Distribution.Client.Buck2.Fingerprint (ccFingerprintOf, fingerprintOf)
@@ -56,6 +56,7 @@ tests =
   , ("disabled-stanzas", disabledStanzas)
   , ("missing-module", missingModule)
   , ("cache-config", cacheConfig)
+  , ("source-deps", sourceDeps)
   ]
 
 -- | A copy of a fixture project, and how to run @cabal-buck2@ in it.
@@ -328,6 +329,38 @@ basic project = do
   ab "out = 'cabal_macros.h'" autogenBuck
   ab "out = 'Main.hs'" autogenBuck
 
+-- | @--source-deps@ unpacks the dependencies (here one package from a local
+-- repository) under @dist-newstyle/src@ and generates their targets like
+-- those of the project's own packages; without it they are left to the cabal
+-- store, and what an earlier run generated for them is removed.
+sourceDeps :: Project -> IO ()
+sourceDeps project = do
+  let dir = projectDir project
+  createDirectoryIfMissing True (dir </> "repo")
+  callProcess "tar" ["-C", dir </> "dep", "-czf", dir </> "repo" </> "dep-1.0.tar.gz", "dep-1.0"]
+  writeFile (dir </> "cabal.project") $
+    unlines ["packages: app", "repository localrepo", "  url: file+noindex://" ++ dir </> "repo", "active-repositories: localrepo"]
+
+  -- With the dependency already in the store, from a run without the flag.
+  _ <- buck2 project []
+  _ <- buck2 project ["--source-deps"]
+  let depBzlPath = "dist-newstyle" </> "src" </> "dep-1.0" </> "BUCK.cabal.bzl"
+  depBzl <- readIn project depBzlPath
+  assertContains depBzlPath "'name': 'dep'" depBzl
+  assertContains depBzlPath "'version': '1.0'" depBzl
+  assertContains depBzlPath "'dir': 'dist-newstyle/src/dep-1.0'" depBzl
+  -- Its data files are recorded, for the tools that read them.
+  assertContains depBzlPath "'data/*.txt'" depBzl
+  appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
+  assertContains "app/BUCK.cabal.bzl" "'dir': 'dist-newstyle/src/dep-1.0'" appBzl
+
+  -- Without the flag the dependency is the store's again.
+  _ <- buck2 project []
+  removed <- not <$> doesDirectoryExist (dir </> "dist-newstyle" </> "src" </> "dep-1.0")
+  unless removed $ failure "dist-newstyle/src/dep-1.0 should have been removed"
+  appBzl' <- readIn project ("app" </> "BUCK.cabal.bzl")
+  assertNotContains "app/BUCK.cabal.bzl" "dist-newstyle/src/dep-1.0" appBzl'
+
 -- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
 -- kept by later runs without the flag, and @--no-cache@ removes.
 cacheConfig :: Project -> IO ()
@@ -359,9 +392,9 @@ cacheConfig project = do
   assertEqual "after --no-cache" before without
 
   -- Mistakes are reported.
-  (code, out) <- runBuck2 project ["--cache=http://example.org"]
-  when (code == ExitSuccess) $ failure "--cache=http://... was accepted"
-  assertContains "bad address" "grpc://" out
+  (badCode, badOut) <- runBuck2 project ["--cache=http://example.org"]
+  when (badCode == ExitSuccess) $ failure "--cache=http://... was accepted"
+  assertContains "bad address" "grpc://" badOut
   (code', out') <- runBuck2 project ["--cache=grpc://a:1", "--no-cache"]
   when (code' == ExitSuccess) $ failure "--cache with --no-cache was accepted"
   assertContains "both flags" "can't be used together" out'

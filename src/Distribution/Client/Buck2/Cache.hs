@@ -9,10 +9,7 @@
 -- @[cabal_buck2] cache@ from it to enable the cache in its execution platform
 -- and C\/C++ toolchain.
 module Distribution.Client.Buck2.Cache
-  ( Buck2Flags (..)
-  , defaultBuck2Flags
-  , buck2FlagOptions
-  , CacheSetting (..)
+  ( CacheSetting (..)
   , cacheSetting
   , configureCache
   , cacheBlock
@@ -25,38 +22,10 @@ import Prelude ()
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
-import Distribution.Simple.Command (OptionField, ShowOrParseArgs, option, reqArg)
-import Distribution.Simple.Flag (Flag, flagToList, flagToMaybe, fromFlagOrDefault, toFlag)
-import Distribution.ReadE (succeedReadE)
-import Distribution.Simple.Setup (trueArg)
+import Distribution.Simple.Flag (flagToMaybe, fromFlagOrDefault)
 import Distribution.Simple.Utils (die', notice)
 
--- | The flags of @cabal buck2@ that are not those of @cabal build@.
-data Buck2Flags = Buck2Flags
-  { buck2CacheAddress :: Flag String
-  , buck2NoCache :: Flag Bool
-  }
-
-defaultBuck2Flags :: Buck2Flags
-defaultBuck2Flags = Buck2Flags{buck2CacheAddress = mempty, buck2NoCache = mempty}
-
-buck2FlagOptions :: ShowOrParseArgs -> [OptionField Buck2Flags]
-buck2FlagOptions _ =
-  [ option
-      []
-      ["cache"]
-      "Use the remote action cache at ADDRESS (grpc://host:port), only to look up and store results: nothing is run remotely. Written to .buckconfig; later runs keep using it."
-      buck2CacheAddress
-      (\v f -> f{buck2CacheAddress = v})
-      (reqArg "ADDRESS" (succeedReadE toFlag) flagToList)
-  , option
-      []
-      ["no-cache"]
-      "Stop using a remote action cache (removes what --cache added to .buckconfig)."
-      buck2NoCache
-      (\v f -> f{buck2NoCache = v})
-      trueArg
-  ]
+import Distribution.Client.Buck2.Flags (Buck2Flags (..))
 
 data CacheSetting
   = -- | Leave .buckconfig as it is.

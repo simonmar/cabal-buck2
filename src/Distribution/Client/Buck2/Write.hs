@@ -7,21 +7,29 @@ import Distribution.Client.Compat.Prelude
 import Prelude ()
 
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.FilePath (makeRelative, takeDirectory, takeFileName, (</>))
+import System.FilePath (takeDirectory, takeFileName, (</>))
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+import qualified Distribution.Compat.NonEmptySet as NES
+
 import qualified Distribution.ModuleName as ModuleName
 import Distribution.Package (packageName)
 import Distribution.PackageDescription
-  ( Library (exposedModules, reexportedModules)
-  , PackageDescription
+  ( Library (exposedModules, libBuildInfo, reexportedModules)
+  , BuildInfo (targetBuildDepends)
+  , LibraryName (LMainLibName)
   , library
+  , libName
+  , pkgBuildableComponents
+  , subLibraries
   )
 import Distribution.Simple.InstallDirs (PathTemplate)
+import Distribution.Types.Component (Component (CLib))
 import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.LocalBuildInfo (LocalBuildInfo)
+import Distribution.Types.Dependency (depLibraries, depPkgName)
 import Distribution.Types.ModuleReexport
   ( ModuleReexport (moduleReexportOriginalName, moduleReexportOriginalPackage)
   )
@@ -30,6 +38,7 @@ import Distribution.Types.PackageName (PackageName)
 import Distribution.Simple.Utils (notice, ordNub, warn)
 
 import Distribution.Client.Buck2.Generate
+import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), rootRelativeDir)
 import Distribution.Client.Buck2.Spec
 import Distribution.Client.Buck2.Starlark
 
@@ -50,71 +59,101 @@ import Distribution.Client.Buck2.Starlark
 --   * @cabal-buck2\/autogen\/BUCK@ (see 'writeAutogenBuck') has
 --     @export_file()@ rules for the autogen files, so they can be
 --     easily referenced from anywhere else.
-writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [(FilePath, PackageDescription)] -> IO ()
+writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> IO ()
 writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs = do
-  traverse_ (writeOnePackage verbosity localIndex projectRoot componentLBIs externalBuildTools projectTestOptions) pkgs
+  sources <- traverse (\pkg -> Set.fromList <$> filterM (doesFileExist . (bpDir pkg </>)) (sourceCandidates (bpDescription pkg))) pkgs
+  let generateAll skipped = [generate skipped pkg srcs | (pkg, srcs) <- zip pkgs sources]
+      -- A library without a rule makes the components that depend on it
+      -- skipped, and a library among those makes more of them skipped, so
+      -- this goes on until nothing changes.
+      fixpoint skipped =
+        let results = generateAll skipped
+            skipped' = skipped <> Set.fromList (concat [librariesWithoutRule pkg r | (pkg, r) <- zip pkgs results])
+         in if skipped' == skipped then results else fixpoint skipped'
+  traverse_ (writeOnePackage verbosity projectRoot) (zip pkgs (fixpoint Set.empty))
   where
+    generate skipped pkg srcs =
+      generatePackageTargets localIndex projectRoot (rootRelativeDir projectRoot (bpDir pkg)) componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (bpDescription pkg)
+
+    librariesWithoutRule pkg (targets, _) =
+      [ (packageName desc, libName lib)
+      | CLib lib <- pkgBuildableComponents desc
+      , not (any (\c -> scKind c == Library && scName c == libTargetName (packageName desc) (libName lib)) (specComponents (ptSpec targets)))
+      ]
+      where
+        desc = bpDescription pkg
+
     localIndex :: LocalPackageIndex
     localIndex =
       Map.fromList
-        [ (packageName pkgDesc, (rootRelativeDir projectRoot pkgDir, reexportOrigins pkgDesc))
-        | (pkgDir, pkgDesc) <- pkgs
+        [ (packageName pkgDesc, (rootRelativeDir projectRoot (bpDir pkg), reexportOrigins pkgDesc))
+        | pkg <- pkgs
+        , let pkgDesc = bpDescription pkg
         ]
-    -- Every module exposed by any local package's main library, to
-    -- resolve a `reexported-modules:` entry that names only the bare
-    -- module, not an explicit `origin-package:Module` - Cabal itself
-    -- resolves that form by searching the reexporting package's own
-    -- build-depends for whichever one actually defines it, which for a
-    -- \*local* origin this index can do too (an external origin doesn't
-    -- need this: its real .conf file already declares the reexport
-    -- directly to ghc-pkg).
-    moduleOwners :: Map.Map ModuleName.ModuleName PackageName
+    -- Every module exposed by any library of a local package, to resolve
+    -- a `reexported-modules:` entry that names only the bare module, not
+    -- an explicit `origin-package:Module` - Cabal itself resolves that
+    -- form by searching the reexporting package's own build-depends for
+    -- whichever one actually defines it, which for a *local* origin this
+    -- index can do too (an external origin doesn't need this: its real
+    -- .conf file already declares the reexport directly to ghc-pkg).
+    moduleOwners :: Map.Map ModuleName.ModuleName [(PackageName, LibraryName)]
     moduleOwners =
-      Map.fromList
-        [ (m, packageName pkgDesc)
-        | (_, pkgDesc) <- pkgs
-        , Just lib <- [library pkgDesc]
+      Map.fromListWith
+        (flip (++))
+        [ (m, [(packageName pkgDesc, libName lib)])
+        | pkg <- pkgs
+        , let pkgDesc = bpDescription pkg
+        , lib <- allLibraries pkgDesc
         , m <- exposedModules lib
         ]
+    allLibraries pkgDesc = maybeToList (library pkgDesc) ++ subLibraries pkgDesc
+    -- The libraries each library of a package re-exports modules from,
+    -- other than itself.
     reexportOrigins pkgDesc =
-      ordNub
-        [ pn
-        | Just lib <- [library pkgDesc]
-        , reexport <- reexportedModules lib
-        , Just pn <- [originPackage reexport]
-        , pn /= packageName pkgDesc
+      Map.fromList
+        [ (libName lib, origins)
+        | lib <- allLibraries pkgDesc
+        , let origins =
+                ordNub
+                  [ o
+                  | reexport <- reexportedModules lib
+                  , Just o <- [reexportOrigin pkgDesc lib reexport]
+                  , o /= (packageName pkgDesc, libName lib)
+                  ]
+        , not (null origins)
         ]
-    originPackage reexport = case moduleReexportOriginalPackage reexport of
-      Just pn -> Just pn
-      Nothing -> Map.lookup (moduleReexportOriginalName reexport) moduleOwners
+    reexportOrigin pkgDesc lib reexport = case moduleReexportOriginalPackage reexport of
+      Just pn
+        | pn == packageName pkgDesc -> pick (filter ((== pn) . fst) candidates)
+        | otherwise -> Just (pn, LMainLibName)
+      Nothing -> pick candidates
+      where
+        candidates = Map.findWithDefault [] (moduleReexportOriginalName reexport) moduleOwners
+        dependedOn = [(depPkgName d, ln) | d <- targetBuildDepends (libBuildInfo lib), ln <- NES.toList (depLibraries d)]
+        pick cs = case filter (`elem` dependedOn) cs ++ cs of
+          o : _ -> Just o
+          [] -> Nothing
 
-rootRelativeDir :: FilePath -> FilePath -> FilePath
-rootRelativeDir projectRoot pkgDir = case makeRelative projectRoot pkgDir of
-  "" -> "."
-  rel -> rel
-
-writeOnePackage :: Verbosity -> LocalPackageIndex -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> (FilePath, PackageDescription) -> IO ()
-writeOnePackage verbosity localIndex projectRoot componentLBIs externalBuildTools projectTestOptions (pkgDir, pkgDesc) = do
-  sources <- Set.fromList <$> filterM (doesFileExist . (pkgDir </>)) (sourceCandidates pkgDesc)
-  let (mtargets, warnings) = generatePackageTargets localIndex (rootRelativeDir projectRoot pkgDir) componentLBIs externalBuildTools projectTestOptions sources pkgDesc
-      pkgName = packageName pkgDesc
+writeOnePackage :: Verbosity -> FilePath -> (BuiltPackage, (PackageTargets, [String])) -> IO ()
+writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc}, (targets, warnings)) = do
+  let pkgName = packageName pkgDesc
+      bzlPath = pkgDir </> "BUCK.cabal.bzl"
+      buckPath = pkgDir </> "BUCK"
   traverse_ (warn verbosity) warnings
-  case mtargets of
-    Nothing -> warn verbosity $ "cabal buck2: no buck2 targets generated for package " ++ show pkgName
-    Just targets -> do
-      let bzlPath = pkgDir </> "BUCK.cabal.bzl"
-          buckPath = pkgDir </> "BUCK"
-      writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets))
-      buckExists <- doesFileExist buckPath
-      unless buckExists $ writeFile buckPath renderBuckWrapper
-      writeAutogenBuck pkgDir pkgName targets
-      notice verbosity $
-        "cabal buck2: generated "
-          ++ (rootRelativeDir projectRoot pkgDir </> "BUCK.cabal.bzl")
-          ++ " ("
-          ++ show (ptComponentCount targets)
-          ++ " component(s))"
-          ++ (if buckExists then "" else ", created " ++ (rootRelativeDir projectRoot pkgDir </> "BUCK"))
+  when (ptComponentCount targets == 0) $
+    warn verbosity $ "cabal buck2: no buck2 targets generated for package " ++ prettyShow pkgName
+  writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets))
+  buckExists <- doesFileExist buckPath
+  unless buckExists $ writeFile buckPath renderBuckWrapper
+  writeAutogenBuck pkgDir pkgName targets
+  notice verbosity $
+    "cabal buck2: generated "
+      ++ (rootRelativeDir projectRoot pkgDir </> "BUCK.cabal.bzl")
+      ++ " ("
+      ++ show (ptComponentCount targets)
+      ++ " component(s))"
+      ++ (if buckExists then "" else ", created " ++ (rootRelativeDir projectRoot pkgDir </> "BUCK"))
 
 -- | Generate an @export_file()@ rule for each autogen file, so that
 -- the files can be easily referenced from somewhere else, including
@@ -170,9 +209,12 @@ specValue :: BuildSpec -> Value
 specValue spec =
   VDict $
     [ ("schema", VInt specSchemaVersion)
-    , ("package", VDict [("name", str (specPackageName spec)), ("dir", str (specPackageDir spec))])
+    , ("package", VDict [("name", str (specPackageName spec)), ("version", str (specPackageVersion spec)), ("dir", str (specPackageDir spec))])
     ]
       ++ listField "ghc_options" (specGhcOptions spec)
+      ++ [ ("data", VDict [("dir", str (specDataDir spec)), ("files", strList (specDataFiles spec))])
+         | not (null (specDataFiles spec))
+         ]
       ++ [("components", VList (map componentValue (specComponents spec)))]
 
 componentValue :: SpecComponent -> Value
@@ -193,6 +235,7 @@ componentValue c =
       ++ listField "cxx_sources" (scCxxSources c)
       ++ listField "cxx_options" (scCxxOptions c)
       ++ listField "include_dirs" (scIncludeDirs c)
+      ++ listField "generated_include_dirs" (scGeneratedIncludeDirs c)
       ++ listField "pkgconfig" (scPkgconfig c)
 
 srcValue :: Src -> Value

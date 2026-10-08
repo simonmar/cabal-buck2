@@ -25,10 +25,15 @@ specSchemaVersion = 1
 -- that comes from Cabal rather than from buck2 conventions.
 data BuildSpec = BuildSpec
   { specPackageName :: String
+  , specPackageVersion :: String
   , specPackageDir :: FilePath
   -- ^ Relative to the buck2 cell root, @.@ at the root.
   , specGhcOptions :: [String]
   -- ^ Supplied by the project, not the @.cabal@ file.
+  , specDataDir :: FilePath
+  -- ^ The package's @data-dir@, relative to its directory.
+  , specDataFiles :: [FilePath]
+  -- ^ Its @data-files@, as patterns, relative to 'specDataDir'.
   , specComponents :: [SpecComponent]
   }
 
@@ -67,6 +72,10 @@ data SpecComponent = SpecComponent
   , scCxxSources :: [FilePath]
   , scCxxOptions :: [String]
   , scIncludeDirs :: [FilePath]
+  , scGeneratedIncludeDirs :: [FilePath]
+  -- ^ Directories, relative to the project root, with headers that the
+  -- package's @configure@ script generated (the build directory's version of
+  -- each relative 'scIncludeDirs').
   , scPkgconfig :: [String]
   }
 

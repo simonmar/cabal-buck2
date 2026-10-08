@@ -1,0 +1,6 @@
+#include "Cmm.h"
+
+stg_depzh (W_ x)
+{
+  return (x);
+}

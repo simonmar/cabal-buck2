@@ -24,6 +24,7 @@ extra-source-files:
   test/fixtures/**/.buckconfig
   test/fixtures/**/.gitkeep
   test/fixtures/**/PACKAGE
+  test/fixtures/**/*.txt
 
 homepage:            https://github.com/simonmar/cabal-buck2
 bug-reports:         https://github.com/simonmar/cabal-buck2/issues
@@ -46,6 +47,7 @@ library
     Distribution.Client.Buck2.Cache
     Distribution.Client.Buck2.Configure
     Distribution.Client.Buck2.Fingerprint
+    Distribution.Client.Buck2.Flags
     Distribution.Client.Buck2.Generate
     Distribution.Client.Buck2.LocalPackages
     Distribution.Client.Buck2.Prebuilt
@@ -83,8 +85,8 @@ executable cabal-buck2
 -- `cabal test` runs `cabal-buck2` on the projects in `test/fixtures`
 -- and checks the files it generates. The tests don't need buck2, and
 -- use a private `CABAL_DIR` and the packages installed with GHC only
--- (the fixtures set `active-repositories: :none`), so they need no
--- network access.
+-- (the fixtures set `active-repositories: :none`, or a local repository
+-- made with `tar`), so they need no network access.
 
 test-suite fixtures
   import:             warnings

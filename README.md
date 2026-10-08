@@ -112,7 +112,7 @@ does the following:
 
    * `third-party/haskell`: tells Buck2 about all the prebuilt package
      dependencies, either in the Cabal store or in GHC's package
-     DB. In here we also record the GHC version you're using, and the
+     DB (unless you build the dependencies from source, see below). In here we also record the GHC version you're using, and the
      paths to any tool dependencies.
 
 # Buck2 quick start
@@ -253,6 +253,42 @@ Things to know:
   //...` goes further and does not download what you asked for either, which
   is a fast way to find out whether everything is already in the cache: the
   summary line shows how many actions were cache hits.
+
+# Building the dependencies with buck2
+
+By default the dependencies of your packages are built by `cabal`, into its
+store, and buck2 uses them from there. With `--source-deps` buck2 builds them
+too:
+
+```
+cabal buck2 --source-deps
+```
+
+The source of each dependency is unpacked under `dist-newstyle/src` and the
+package gets a `BUCK` and `BUCK.cabal.bzl` like those of your own packages.
+Only the packages that come with GHC are used from its package database; the
+build then doesn't depend on the Cabal store at all. Together with a
+[build cache](#sharing-build-results-a-build-cache) that means a dependency is
+built once, and then found in the cache by every other checkout, which is the
+job the store does for `cabal`.
+
+Things to know:
+
+* Running `cabal buck2` again without `--source-deps` goes back to the store,
+  and removes the packages that were unpacked for the previous run.
+* The tools that dependencies need to preprocess sources (`alex` and `happy`)
+  are built by buck2 too, when the project needs them.
+* Components that use `cmm-sources`, `asm-sources` or `js-sources` are not
+  supported. They are skipped with a warning, and so are the components that
+  depend on them (`atomic-counter` is an example, and so is `tar` which
+  depends on it).
+* A package with a `configure` script is configured in its build directory
+  by `cabal buck2`, and the headers it generates are part of the build. Other
+  packages with a `Custom` build type are not supported (see
+  [Custom build type](#custom-build-type)).
+* The build plan can only have one version of each package, because a package
+  in a `.cabal` file is referred to by its name. `cabal buck2` stops and lists
+  the packages that need more than one.
 
 # Performance
 

@@ -62,16 +62,12 @@ import Distribution.Simple.Utils (die', notice)
 import Distribution.Verbosity (normal)
 
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
-import Distribution.Client.Buck2.Cache
-  ( Buck2Flags
-  , buck2FlagOptions
-  , cacheSetting
-  , configureCache
-  , defaultBuck2Flags
-  )
+import Distribution.Client.Buck2.Cache (cacheSetting, configureCache)
 import Distribution.Client.Buck2.Configure (configureComponents)
+import Distribution.Client.Buck2.Flags (Buck2Flags, buck2FlagOptions, defaultBuck2Flags, dependencyMode)
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
+  , localToolTargets
   , projectTestOptions
   , wantedBuildTools
   )
@@ -122,12 +118,12 @@ buck2Action flags extraArgs globalFlags = do
       let projectRoot = distProjectRootDirectory (distDirLayout baseCtx)
       checkBuck2Prelude verbosity projectRoot
 
-      buildCtx <- buildDependencies verbosity baseCtx targetSelectors
+      buildCtx <- buildDependencies verbosity mode baseCtx targetSelectors
 
       ensureBuckconfigAndPackage verbosity projectRoot
       configureCache verbosity projectRoot cache
 
-      localPkgs <- builtLocalPackages verbosity (distDirLayout baseCtx) (elaboratedPlanOriginal buildCtx)
+      localPkgs <- builtLocalPackages verbosity mode (distDirLayout baseCtx) (elaboratedPlanOriginal buildCtx)
 
       (externalBuildTools, resolvedDeps) <-
         generatePrebuilt
@@ -136,18 +132,19 @@ buck2Action flags extraArgs globalFlags = do
           (cabalDirLayout baseCtx)
           (elaboratedShared buildCtx)
           (elaboratedPlanToExecute buildCtx)
+          (localToolTargets projectRoot localPkgs)
           (wantedBuildTools localPkgs)
 
       -- 'generatePrebuilt' already found and parsed every real @.conf@
       -- file of the resolved dependency closure.
-      componentLBIs <- configureComponents verbosity baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
+      componentLBIs <- configureComponents verbosity mode baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
 
       writeAllPackages
         verbosity
         projectRoot
         componentLBIs
         externalBuildTools
-        (projectTestOptions (elaboratedPlanOriginal buildCtx))
+        (projectTestOptions mode (elaboratedPlanOriginal buildCtx))
         localPkgs
 
       notice verbosity $
@@ -159,4 +156,5 @@ buck2Action flags extraArgs globalFlags = do
           ]
   where
     verbosity = cfgVerbosity normal flags
+    mode = dependencyMode (extraFlags flags)
     depsFlags = flags{installFlags = (installFlags flags){installOnlyDeps = toFlag True}}

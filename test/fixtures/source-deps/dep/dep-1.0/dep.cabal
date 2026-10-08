@@ -1,0 +1,13 @@
+cabal-version: 3.0
+name:          dep
+version:       1.0
+build-type:    Simple
+data-files:    data/*.txt
+
+library
+  exposed-modules:  Dep
+  other-modules:    Paths_dep
+  hs-source-dirs:   src
+  build-depends:    base
+  cmm-sources:      cmm/Dep.cmm
+  default-language: Haskell2010
