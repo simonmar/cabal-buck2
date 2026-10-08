@@ -237,12 +237,22 @@ Things to know:
   Use `--no-cache` if you stop using it.
 * The key of a cached result includes the command line, the environment and
   the contents of the inputs. It includes the exact packages from the Cabal
-  store (their unit ids) and a fingerprint of the GHC installation (its
-  version, platform, source commit and the interface hashes of its boot
-  packages), but **not** the C compiler, the linker or system libraries. That
-  is fine on one machine; sharing a cache between machines with different
-  system toolchains is not safe yet.
-* Linking C/C++ code, and `pkg-config` queries, are not cached.
+  store (their unit ids), a fingerprint of the GHC installation (its version,
+  platform, source commit and the interface hashes of its boot packages) and
+  a fingerprint of the C toolchain (the versions of the C compiler, `ld`, the
+  C library and `libstdc++`). It does **not** include other files that are
+  found on the system, such as headers and libraries that are not part of
+  those. That is fine on one machine; sharing a cache between machines with
+  different system software is not safe yet.
+* Compiling and linking C/C++ code is cached, `pkg-config` queries are not.
+* **buck2 only downloads what is needed.** A result that is found in the cache
+  is not downloaded until something needs its files: a local action that has
+  it as an input, `buck2 run` or `buck2 test`, or it is what you asked to
+  build. So most intermediate results (the compiled modules of a library
+  that was cached as a whole, say) are never fetched. `buck2 build -M none
+  //...` goes further and does not download what you asked for either, which
+  is a fast way to find out whether everything is already in the cache: the
+  summary line shows how many actions were cache hits.
 
 # Performance
 
