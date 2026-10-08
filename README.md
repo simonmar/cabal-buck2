@@ -224,7 +224,10 @@ cabal buck2 --cache=grpc://127.0.0.1:9092
 
 `--cache` adds a block to `.buckconfig` (between `# >>> cabal buck2: cache`
 and `# <<< cabal buck2: cache <<<`; anything else in the file is left alone),
-which later runs keep. `cabal buck2 --no-cache` removes it. In a test with
+which later runs keep. `cabal buck2 --no-cache` removes it. **Run
+`buck2 kill` after changing it**: buck2 reads the cache's address when its
+daemon starts, and a daemon that was already running keeps the old settings.
+In a test with
 `persistent`, a build in a fresh directory went from 33 s to about 1 s.
 
 Things to know:

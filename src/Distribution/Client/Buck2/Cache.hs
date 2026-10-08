@@ -88,13 +88,21 @@ configureCache verbosity projectRoot setting = do
   when (new /= old) $ do
     length old `seq` writeFile path new
     notice verbosity $
-      case setting of
-        CacheOn address -> "cabal buck2: using the action cache at " ++ address ++ " (see .buckconfig)"
-        _ -> "cabal buck2: no longer using an action cache"
+      unlines
+        [ case setting of
+            CacheOn address -> "cabal buck2: using the action cache at " ++ address ++ " (see .buckconfig)"
+            _ -> "cabal buck2: no longer using an action cache"
+        , "cabal buck2: run `buck2 kill` now: a running buck2 daemon keeps using the old settings"
+        , "(with a cache address but half of the new settings it retries connecting for ~45s on every build)"
+        ]
 
 -- | The lines @cabal buck2 --cache=ADDRESS@ puts in @.buckconfig@, without the
 -- markers. @default_allow_cache_upload@ is needed because most actions of
--- the prelude don't opt in to having their results uploaded.
+-- the prelude don't opt in to having their results uploaded, and
+-- @engine_address@ because buck2 won't connect to the cache without it, even
+-- though nothing is run there. buck2 reads @[buck2_re_client]@ when its daemon
+-- starts, but @[cabal_buck2] cache@ on every command, so a daemon that was
+-- running before these settings were added has to be restarted.
 cacheBlock :: String -> [String]
 cacheBlock address =
   [ "[cabal_buck2]"
