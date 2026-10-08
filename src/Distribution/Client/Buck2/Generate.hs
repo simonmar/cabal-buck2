@@ -86,6 +86,7 @@ import Distribution.Types.UnqualComponentName (unUnqualComponentName)
 import Distribution.Utils.Path (getSymbolicPath)
 
 import Distribution.Simple.Build.Macros (generateCabalMacrosHeader)
+import Distribution.Simple.PreProcess (platformDefines)
 import Distribution.Simple.Build.PathsModule (generatePathsModule)
 import Distribution.Simple.BuildPaths (autogenPathsModuleName)
 import Distribution.Simple.InstallDirs
@@ -305,7 +306,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
            in componentTargets
                 (specComponent localIndex externalBuildTools Library targetName bi)
                   { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
-                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi
+                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi, scHscOptions = platformDefines lbi
                   }
                 (macrosHeader targetName pkgDesc lbi clbi : srcAutogen ++ map snd extra)
       where
@@ -316,7 +317,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
     -- arguments.
     executableLike kind targetName lbi clbi bi mainSrc otherSrcs testArgs srcAutogen =
       componentTargets
-        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs, scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi}
+        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs, scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi, scHscOptions = platformDefines lbi}
         (macrosHeader targetName pkgDesc lbi clbi : srcAutogen)
 
     -- The shape shared by an executable, an @exitcode-stdio-1.0@
@@ -494,6 +495,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCmmSources = map getSymbolicPath (cmmSources bi)
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
+    , scHscOptions = []
     , scGeneratedIncludeDirs = []
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
     }
