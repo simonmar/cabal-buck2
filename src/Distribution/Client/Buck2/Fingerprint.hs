@@ -8,6 +8,8 @@
 module Distribution.Client.Buck2.Fingerprint
   ( ghcFingerprint
   , fingerprintOf
+  , ccFingerprint
+  , ccFingerprintOf
   ) where
 
 import Data.ByteString (ByteString)
@@ -17,8 +19,11 @@ import Data.List (isPrefixOf, sort)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
-import System.Directory (listDirectory)
-import System.FilePath (isExtensionOf, (</>))
+import Control.Exception (SomeException, try)
+import System.Directory (canonicalizePath, listDirectory)
+import System.Exit (ExitCode (..))
+import System.FilePath (isExtensionOf, takeFileName, (</>))
+import System.Process (readProcessWithExitCode)
 
 import Distribution.Simple.Compiler (Compiler, compilerProperties)
 import Distribution.Utils.MD5 (md5, showMD5)
@@ -74,3 +79,53 @@ fingerprintOf props confs =
     stripKey line
       | "abi:" `isPrefixOf` line = Just (dropWhile isSpace (drop 4 line))
       | otherwise = Nothing
+
+-- | A fingerprint of the C toolchain, for the same purpose as 'ghcFingerprint'.
+-- It matters for more than the C and C++ code of a project: GHC runs the C
+-- compiler to preprocess modules that use CPP and to link, and @hsc2hs@ runs
+-- it too.
+--
+-- It is made from what the tools report about themselves, so it identifies
+-- the versions in use and not the files: the C compiler @GHC@ is configured
+-- with (@gcc@, normally) together with @cc@, @c++@, @g++@ and @ld@, the C
+-- library, and the C++ standard library the compiler would link.
+ccFingerprint :: Compiler -> IO String
+ccFingerprint compiler = do
+  let ghcCC = Map.findWithDefault "gcc" "C compiler command" (compilerProperties compiler)
+      tools = ordNubOn id [ghcCC, "cc", "c++", "g++", "ld"]
+  versions <- mapM (\t -> (,) t <$> firstLine ["--version"] t) tools
+  target <- firstLine ["-dumpmachine"] "cc"
+  libc <- firstLine ["--version"] "ldd"
+  libcxx <- stdlibName
+  return (ccFingerprintOf ([("target", target), ("libc", libc), ("libstdc++", libcxx)] ++ versions))
+  where
+    firstLine args cmd = do
+      r <- try (readProcessWithExitCode cmd args "")
+      return $ case r :: Either SomeException (ExitCode, String, String) of
+        Right (ExitSuccess, out, _) | (l : _) <- lines out -> l
+        _ -> "unavailable"
+    -- The file that @libstdc++.so@ is, which has the library's version in its
+    -- name.
+    stdlibName = do
+      r <- try (readProcessWithExitCode "c++" ["-print-file-name=libstdc++.so"] "")
+      case r :: Either SomeException (ExitCode, String, String) of
+        Right (ExitSuccess, out, _) | (l : _) <- lines out -> do
+          real <- try (canonicalizePath l)
+          return (either (const l) takeFileName (real :: Either SomeException FilePath))
+        _ -> return "unavailable"
+    ordNubOn f = go []
+      where
+        go _ [] = []
+        go seen (x : xs)
+          | f x `elem` seen = go seen xs
+          | otherwise = x : go (f x : seen) xs
+
+-- | The fingerprint, given what the tools reported, as @(name, report)@ pairs.
+-- It starts with the target the C compiler reports, to be readable.
+ccFingerprintOf :: [(String, String)] -> String
+ccFingerprintOf reports =
+  concat
+    [ maybe "unknown" (map (\c -> if isSpace c then '_' else c)) (lookup "target" reports)
+    , "-"
+    , take 12 (showMD5 (md5 (BS8.pack (unlines [name ++ ": " ++ report | (name, report) <- sort reports]))))
+    ]

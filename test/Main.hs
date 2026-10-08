@@ -24,7 +24,7 @@ import System.IO (hPutStrLn, stderr)
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, getCurrentPid)
 
 import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
-import Distribution.Client.Buck2.Fingerprint (fingerprintOf)
+import Distribution.Client.Buck2.Fingerprint (ccFingerprintOf, fingerprintOf)
 
 main :: IO ()
 main = do
@@ -39,7 +39,7 @@ main = do
     exitFailure
 
 unitTests :: [(String, IO ())]
-unitTests = [("fingerprint", fingerprint), ("splice-block", spliceBlockTest)]
+unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest)]
 
 runUnitTest :: (String, IO ()) -> IO Bool
 runUnitTest (name, test) = do
@@ -167,6 +167,27 @@ fingerprint = do
   -- Properties it doesn't use don't matter.
   assertEqual "unused property" fp (fingerprintOf (Map.insert "C compiler command" "gcc" props) confs)
 
+-- | The fingerprint of the C toolchain: GHC uses it to preprocess and link, and
+-- buck2 to compile and link C and C++.
+ccFingerprint :: IO ()
+ccFingerprint = do
+  let reports =
+        [ ("target", "x86_64-pc-linux-gnu")
+        , ("libc", "ldd (GNU libc) 2.39")
+        , ("libstdc++", "libstdc++.so.6.0.33")
+        , ("gcc", "gcc (GCC) 13.2.0")
+        , ("ld", "GNU ld 2.42")
+        ]
+      fp = ccFingerprintOf reports
+  assertContains "cc fingerprint" "x86_64-pc-linux-gnu-" fp
+  assertEqual "reordered" fp (ccFingerprintOf (reverse reports))
+  let changed name new = [(n, if n == name then new else v) | (n, v) <- reports]
+  assertDiffers "libc" fp (ccFingerprintOf (changed "libc" "ldd (GNU libc) 2.40"))
+  assertDiffers "libstdc++" fp (ccFingerprintOf (changed "libstdc++" "libstdc++.so.6.0.34"))
+  assertDiffers "compiler" fp (ccFingerprintOf (changed "gcc" "gcc (GCC) 14.1.0"))
+  assertDiffers "linker" fp (ccFingerprintOf (changed "ld" "GNU ld 2.43"))
+  assertDiffers "target" fp (ccFingerprintOf (changed "target" "aarch64-linux-gnu"))
+
 -- | Adding, changing and removing the block that @--cache@ puts in a config
 -- file, without touching anything else in it.
 spliceBlockTest :: IO ()
@@ -211,6 +232,7 @@ basic project = do
   let toolsPath = "third-party" </> "haskell" </> "tools.bzl"
   tools <- readIn project toolsPath
   assertContains toolsPath "GHC_FINGERPRINT = \"" tools
+  assertContains toolsPath "CC_FINGERPRINT = \"" tools
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
   tools' <- readIn project toolsPath
   assertEqual "tools.bzl after a second run" tools tools'
@@ -315,7 +337,9 @@ cacheConfig project = do
   before <- readIn project buckconfig
   assertNotContains buckconfig block before
 
-  _ <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  out <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  -- A running buck2 daemon would keep the old settings.
+  assertContains "notice" "buck2 kill" out
   withCache <- readIn project buckconfig
   assertContains buckconfig "[cabal_buck2]\n  cache = true" withCache
   assertContains buckconfig "default_allow_cache_upload = true" withCache
