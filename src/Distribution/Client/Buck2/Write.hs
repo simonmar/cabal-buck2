@@ -6,6 +6,7 @@ module Distribution.Client.Buck2.Write
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
+import Data.List (stripPrefix)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, takeFileName, (</>))
 
@@ -35,7 +36,7 @@ import Distribution.Types.ModuleReexport
   )
 import Distribution.Types.PackageName (PackageName)
 
-import Distribution.Simple.Utils (notice, ordNub, warn)
+import Distribution.Simple.Utils (die', notice, ordNub, warn)
 
 import Distribution.Client.Buck2.Generate
 import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), rootRelativeDir)
@@ -59,8 +60,8 @@ import Distribution.Client.Buck2.Starlark
 --   * @cabal-buck2\/autogen\/BUCK@ (see 'writeAutogenBuck') has
 --     @export_file()@ rules for the autogen files, so they can be
 --     easily referenced from anywhere else.
-writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> IO ()
-writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs = do
+writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> Bool -> IO ()
+writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs keepGoing = do
   sources <- traverse (\pkg -> Set.fromList <$> filterM (doesFileExist . (bpDir pkg </>)) (sourceCandidates (bpDescription pkg))) pkgs
   let generateAll skipped = [generate skipped pkg srcs | (pkg, srcs) <- zip pkgs sources]
       -- A library without a rule makes the components that depend on it
@@ -70,7 +71,18 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
         let results = generateAll skipped
             skipped' = skipped <> Set.fromList (concat [librariesWithoutRule pkg r | (pkg, r) <- zip pkgs results])
          in if skipped' == skipped then results else fixpoint skipped'
-  traverse_ (writeOnePackage verbosity projectRoot) (zip pkgs (fixpoint Set.empty))
+  let results = zip pkgs (fixpoint Set.empty)
+      problems = concat [warnings | (_, (_, warnings)) <- results]
+  unless (null problems) $
+    if keepGoing
+      then traverse_ (warn verbosity) problems
+      else
+        die' verbosity $
+          unlines $
+            ["cabal buck2: some components can't be built with buck2:"]
+              ++ map (("  " ++) . withoutPrefix) problems
+              ++ ["Use --keep-going to generate everything else anyway."]
+  traverse_ (writeOnePackage verbosity projectRoot) results
   where
     generate skipped pkg srcs =
       generatePackageTargets localIndex projectRoot (rootRelativeDir projectRoot (bpDir pkg)) componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (bpDescription pkg)
@@ -135,12 +147,15 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
           o : _ -> Just o
           [] -> Nothing
 
+withoutPrefix :: String -> String
+withoutPrefix = fromMaybe <*> stripPrefix "cabal buck2: "
+
 writeOnePackage :: Verbosity -> FilePath -> (BuiltPackage, (PackageTargets, [String])) -> IO ()
-writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc}, (targets, warnings)) = do
+writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc}, (targets, _)) = do
   let pkgName = packageName pkgDesc
       bzlPath = pkgDir </> "BUCK.cabal.bzl"
       buckPath = pkgDir </> "BUCK"
-  traverse_ (warn verbosity) warnings
+  traverse_ (notice verbosity) (ptNotes targets)
   when (ptComponentCount targets == 0) $
     warn verbosity $ "cabal buck2: no buck2 targets generated for package " ++ prettyShow pkgName
   writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets))

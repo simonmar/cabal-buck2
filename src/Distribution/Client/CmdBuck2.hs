@@ -52,11 +52,11 @@ import Distribution.Client.ScriptUtils
   )
 import Distribution.Client.Setup
   ( GlobalFlags
-  , InstallFlags (installOnlyDeps)
+  , InstallFlags (installKeepGoing, installOnlyDeps)
   )
 
 import Distribution.Simple.Command (CommandUI (..), usageAlternatives)
-import Distribution.Simple.Flag (toFlag)
+import Distribution.Simple.Flag (fromFlagOrDefault, toFlag)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Simple.Utils (die', notice)
 import Distribution.Verbosity (normal)
@@ -95,7 +95,9 @@ buck2Command =
           ++ "buck2/README.md for details.\n\n"
           ++ "Flags that would normally be passed to `cabal build`/`cabal "
           ++ "configure` (-f, --enable-profiling, --enable-tests, etc.) are "
-          ++ "honoured here too, and apply to the dependency build."
+          ++ "honoured here too, and apply to the dependency build.\n\n"
+          ++ "A component that can't be built with buck2 is an error, unless "
+          ++ "--keep-going is given: then it is skipped with a warning."
     , commandNotes = Nothing
     , commandDefaultFlags = defaultNixStyleFlags defaultBuck2Flags
     , commandOptions = nixStyleOptions buck2FlagOptions
@@ -146,6 +148,7 @@ buck2Action flags extraArgs globalFlags = do
         externalBuildTools
         (projectTestOptions mode (elaboratedPlanOriginal buildCtx))
         localPkgs
+        (fromFlagOrDefault False (installKeepGoing (installFlags flags)))
 
       notice verbosity $
         unlines

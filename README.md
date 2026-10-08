@@ -115,6 +115,11 @@ does the following:
      DB (unless you build the dependencies from source, see below). In here we also record the GHC version you're using, and the
      paths to any tool dependencies.
 
+A component that can't be built with buck2 (a module that can't be found,
+`asm-sources`, a dependency that is itself such a component, ...) is an error:
+`cabal buck2` lists them and generates nothing. With `--keep-going`, as in
+`cabal build`, it warns about them, generates everything else and carries on.
+
 # Buck2 quick start
 
 To build your code:

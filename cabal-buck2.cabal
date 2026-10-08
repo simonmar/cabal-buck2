@@ -18,6 +18,7 @@ extra-doc-files:    README.md, changelog.md
 extra-source-files:
   test/fixtures/**/*.c
   test/fixtures/**/*.cmm
+  test/fixtures/**/*.S
   test/fixtures/**/*.cabal
   test/fixtures/**/*.h
   test/fixtures/**/*.hs

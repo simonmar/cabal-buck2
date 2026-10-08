@@ -12,6 +12,7 @@ import System.Directory
   ( copyFile
   , createDirectoryIfMissing
   , doesDirectoryExist
+  , doesFileExist
   , findExecutable
   , getTemporaryDirectory
   , listDirectory
@@ -422,10 +423,19 @@ disabledStanzas project = do
 -- | A component whose sources can't all be found is skipped with a warning
 -- saying why (a rule that names a missing file would take down the whole
 -- buck2 build), and so is every component of the same package that depends
--- on it. Everything else is still generated.
+-- on it. By default that is an error and nothing is generated; with
+-- @--keep-going@ everything else is generated.
 missingModule :: Project -> IO ()
 missingModule project = do
-  out <- buck2 project []
+  (code, failed) <- runBuck2 project []
+  when (code == ExitSuccess) $ failure "a component that can't be built was accepted"
+  assertContains "error" "for module Absent" failed
+  assertContains "error" "skipping library broken-pkg" failed
+  assertContains "error" "--keep-going" failed
+  generated <- doesFileExist (projectDir project </> "broken-pkg" </> "BUCK.cabal.bzl")
+  when generated $ failure "files were generated despite the error"
+
+  out <- buck2 project ["--keep-going"]
   assertContains "output" "for module Absent" out
   assertContains "output" "skipping library broken-pkg" out
   assertContains "output" "skipping executable uses-lib" out

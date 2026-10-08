@@ -135,6 +135,8 @@ data PackageTargets = PackageTargets
   { ptSpec :: BuildSpec
   , ptComponentCount :: Int
   , ptAutogenFiles :: [AutogenFile]
+  , ptNotes :: [String]
+  -- ^ What was left out because the build plan doesn't include it.
   }
 
 -- | One component's contribution to a 'PackageTargets': its entry in the
@@ -144,13 +146,16 @@ data ComponentTargets = ComponentTargets
   { ctSpec :: [SpecComponent]
   , ctAutogen :: [AutogenFile]
   , ctWarnings :: [String]
+  -- ^ Problems: components that can't be built.
+  , ctNotes :: [String]
+  -- ^ Components left out because the build plan doesn't include them.
   }
 
 instance Semigroup ComponentTargets where
-  ComponentTargets s1 a1 w1 <> ComponentTargets s2 a2 w2 = ComponentTargets (s1 ++ s2) (a1 ++ a2) (w1 ++ w2)
+  ComponentTargets s1 a1 w1 n1 <> ComponentTargets s2 a2 w2 n2 = ComponentTargets (s1 ++ s2) (a1 ++ a2) (w1 ++ w2) (n1 ++ n2)
 
 instance Monoid ComponentTargets where
-  mempty = ComponentTargets [] [] []
+  mempty = ComponentTargets [] [] [] []
 
 componentTargets :: SpecComponent -> [AutogenFile] -> ComponentTargets
 componentTargets component files = mempty{ctSpec = [component], ctAutogen = files}
@@ -204,6 +209,7 @@ generatePackageTargets localIndex projectRoot rootRelPkgDir componentLBIs extern
         { ptSpec = packageSpec pkgDesc rootRelPkgDir (packageGhcOptions pkgDesc componentLBIs) components
         , ptComponentCount = length components
         , ptAutogenFiles = dedupAutogenFiles (concatMap ctAutogen results)
+        , ptNotes = concatMap ctNotes results
         }
 
 -- | Look up a component's 'LocalBuildInfo' and
@@ -251,9 +257,9 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
 
     -- A component that wasn't configured, because the build plan doesn't
     -- include it. For the project's own packages that means a stanza that
-    -- isn't enabled, which the user may want to know.
+    -- isn't enabled, which the user may want to know, but is not an error.
     notConfigured what
-      | inProject = skip (what ++ " (no LocalBuildInfo found for it in the elaborated build plan)")
+      | inProject = mempty{ctNotes = ["cabal buck2: no targets for " ++ what ++ " in package " ++ unPackageName (packageName pkgDesc) ++ " (not in the build plan: is its stanza enabled?)"]}
       | otherwise = mempty
 
     -- Skip a component, with the warnings for the problems that led to it
@@ -261,12 +267,15 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
     skipBecause problems why =
       mempty{ctWarnings = problems ++ ["cabal buck2: skipping " ++ why ++ " in package " ++ unPackageName (packageName pkgDesc)]}
 
-    -- A component that build-depends on a library that was skipped (see
+    -- A component the build plan doesn't include is left out without
+    -- further ado, whatever it needs. Otherwise, a component that
+    -- build-depends on a library that was skipped (see
     -- 'skippedLibs') can't be built either - it would emit a rule whose
     -- own @deps@ references a target that was never generated, which buck2
     -- rejects outright ("Unknown target") at analysis time for the whole
     -- build, not just a warning.
     ifNotOnSkippedLib bi targetName kind act
+      | isNothing (lbiClbiFor pkgDesc componentLBIs comp) = notConfigured (kindName kind ++ " " ++ targetName)
       | unsupported : _ <- unsupportedSources bi =
           skip (kindName kind ++ " " ++ targetName ++ " (" ++ unsupported ++ " aren't supported)")
       | otherwise =
