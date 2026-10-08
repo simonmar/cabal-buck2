@@ -716,7 +716,7 @@ detailedTestStub targetName testModule = (SrcAutogen name, file)
 -- own srcs-resolution (@_resolve_src@) knows to run through
 -- hsc2hs()\/alex()\/happy().
 moduleCandidates :: BuildInfo -> ModuleName.ModuleName -> [FilePath]
-moduleCandidates bi m = [normalise (dir </> ModuleName.toFilePath m <.> ext) | dir <- sourceDirs bi, ext <- ["hs", "lhs", "hsc", "x", "y"]]
+moduleCandidates bi m = [normalise (dir </> ModuleName.toFilePath m <.> ext) | dir <- sourceDirs bi, ext <- ["hs", "lhs", "hsc", "x", "y", "ly"]]
 
 mainIsCandidates :: BuildInfo -> FilePath -> [FilePath]
 mainIsCandidates bi mainIs = [normalise (dir </> mainIs) | dir <- sourceDirs bi]

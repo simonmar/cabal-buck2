@@ -355,6 +355,8 @@ sourceDeps project = do
   assertContains depBzlPath "'cmm_sources'" depBzl
   assertContains depBzlPath "'cmm/Dep.cmm'" depBzl
   appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
+  -- A literate happy grammar is a module source.
+  assertContains "app/BUCK.cabal.bzl" "'Parser': 'Parser.ly'" appBzl
   assertContains "app/BUCK.cabal.bzl" "'dir': 'dist-newstyle/src/dep-1.0'" appBzl
 
   -- Without the flag the dependency is the store's again.
