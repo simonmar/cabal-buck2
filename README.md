@@ -287,7 +287,7 @@ Things to know:
   are skipped with a warning, and so are the components that depend on them.
 * A package with a `configure` script is configured in its build directory
   by `cabal buck2`, and the headers it generates are part of the build. Other
-  packages with a `Custom` build type are not supported (see
+  packages with a `Custom` build type can't be built (see
   [Custom build type](#custom-build-type)).
 * The build plan can only have one version of each package, because a package
   in a `.cabal` file is referred to by its name. `cabal buck2` stops and lists
@@ -370,9 +370,13 @@ integration](https://github.com/tweag/buck2-haskell).
 
 ## Custom build type
 
-The `cabal buck2` command doesn't run the actual `Setup.hs` code for a
-package with the (legacy) Custom build type. If you rely on this, use
-Hooks instead.
+Build-type `Custom` isn't supported, and can't be in general, so
+`cabal buck2` will fail if any package requires it. Note that this
+also applies to dependencies when `--source-deps` is being used.  As
+with other unsupported features, you can use `--keep-going` to just
+skip all the affected packages.
+
+One notable package currently ruled out by this is `ghc-paths`.
 
 ## **Template Haskell and `prof`**
 

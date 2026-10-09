@@ -58,6 +58,7 @@ tests =
   , ("missing-module", missingModule)
   , ("cache-config", cacheConfig)
   , ("source-deps", sourceDeps)
+  , ("custom-setup", customSetup)
   ]
 
 -- | A copy of a fixture project, and how to run @cabal-buck2@ in it.
@@ -330,6 +331,17 @@ basic project = do
   ab "out = 'cabal_macros.h'" autogenBuck
   ab "out = 'Main.hs'" autogenBuck
 
+-- | Make a repository of the packages in the project's @dep@ directory, which is
+-- the only one used, and a @cabal.project@ for the project's @app@ package.
+localRepository :: Project -> [String] -> IO ()
+localRepository project names = do
+  let dir = projectDir project
+  createDirectoryIfMissing True (dir </> "repo")
+  forM_ names $ \name ->
+    callProcess "tar" ["-C", dir </> "dep", "-czf", dir </> "repo" </> (name ++ ".tar.gz"), name]
+  writeFile (dir </> "cabal.project") $
+    unlines ["packages: app", "repository localrepo", "  url: file+noindex://" ++ dir </> "repo", "active-repositories: localrepo"]
+
 -- | @--source-deps@ unpacks the dependencies (here one package from a local
 -- repository) under @dist-newstyle/src@ and generates their targets like
 -- those of the project's own packages; without it they are left to the cabal
@@ -337,10 +349,7 @@ basic project = do
 sourceDeps :: Project -> IO ()
 sourceDeps project = do
   let dir = projectDir project
-  createDirectoryIfMissing True (dir </> "repo")
-  callProcess "tar" ["-C", dir </> "dep", "-czf", dir </> "repo" </> "dep-1.0.tar.gz", "dep-1.0"]
-  writeFile (dir </> "cabal.project") $
-    unlines ["packages: app", "repository localrepo", "  url: file+noindex://" ++ dir </> "repo", "active-repositories: localrepo"]
+  localRepository project ["dep-1.0"]
 
   -- With the dependency already in the store, from a run without the flag.
   _ <- buck2 project []
@@ -369,6 +378,23 @@ sourceDeps project = do
   unless removed $ failure "dist-newstyle/src/dep-1.0 should have been removed"
   appBzl' <- readIn project ("app" </> "BUCK.cabal.bzl")
   assertNotContains "app/BUCK.cabal.bzl" "dist-newstyle/src/dep-1.0" appBzl'
+
+-- | A package with a @Custom@ build type needs its @Setup.hs@ to be run, which
+-- is not done: it, and what depends on it, can't be built.
+customSetup :: Project -> IO ()
+customSetup project = do
+  localRepository project ["custom-dep-0.1"]
+  (code, failed) <- runBuck2 project ["--source-deps"]
+  when (code == ExitSuccess) $ failure "a package with build-type: Custom was accepted"
+  assertContains "error" "custom-dep" failed
+  assertContains "error" "build-type: Custom" failed
+  assertContains "error" "--keep-going" failed
+
+  out <- buck2 project ["--source-deps", "--keep-going"]
+  assertContains "warning" "build-type: Custom" out
+  assertContains "warning" "skipping executable app" out
+  depBzl <- readIn project ("dist-newstyle" </> "src" </> "custom-dep-0.1" </> "BUCK.cabal.bzl")
+  assertNotContains "custom-dep BUCK.cabal.bzl" "'kind': 'library'" depBzl
 
 -- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
 -- kept by later runs without the flag, and @--no-cache@ removes.

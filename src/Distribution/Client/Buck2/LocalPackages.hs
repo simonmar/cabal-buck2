@@ -11,8 +11,10 @@ module Distribution.Client.Buck2.LocalPackages
   , BuiltPackage (..)
   , builtLocalPackages
   , rootRelativeDir
+  , nonLibraryTargetName
   , ToolTarget (..)
   , localToolTargets
+  , localBuildTools
   , wantedBuildTools
   , projectTestOptions
   ) where
@@ -42,7 +44,7 @@ import Distribution.Client.Types (confInstId)
 import Distribution.Client.Types.PackageLocation (PackageLocation (..))
 import Distribution.Types.UnitId (newSimpleUnitId)
 
-import Distribution.Package (PackageName, packageId, packageName)
+import Distribution.Package (PackageName, packageId, packageName, unPackageName)
 import Distribution.PackageDescription (PackageDescription)
 import qualified Distribution.PackageDescription as PD
 import Distribution.Simple.InstallDirs (PathTemplate)
@@ -202,6 +204,16 @@ removeStaleSources verbosity distDirLayout current = do
         info verbosity $ "cabal buck2: removing " ++ dir ++ ", which is no longer in the build plan"
         removeDirectoryRecursive dir
 
+-- | The target of an executable, test-suite or benchmark, given the suffix for
+-- its kind. Cabal allows one to have the name of its package, which is also
+-- the name of the target of the package's main library.
+nonLibraryTargetName :: String -> PackageDescription -> UnqualComponentName -> String
+nonLibraryTargetName suffix desc component
+  | name == unPackageName (packageName desc) && isJust (PD.library desc) = name ++ suffix
+  | otherwise = name
+  where
+    name = unUnqualComponentName component
+
 -- | A directory relative to the project root, @.@ for the root itself.
 rootRelativeDir :: FilePath -> FilePath -> FilePath
 rootRelativeDir projectRoot dir = case makeRelative projectRoot dir of
@@ -223,7 +235,7 @@ data ToolTarget = ToolTarget
 localToolTargets :: FilePath -> [BuiltPackage] -> Map String ToolTarget
 localToolTargets projectRoot pkgs =
   Map.fromList
-    [ (tool, ToolTarget{toolLabel = label pkg tool, toolData = dataFor (packageName desc : map depPkgName (PD.targetBuildDepends (PD.buildInfo exe)))})
+    [ (tool, ToolTarget{toolLabel = label pkg (nonLibraryTargetName "-exe" desc (PD.exeName exe)), toolData = dataFor (packageName desc : map depPkgName (PD.targetBuildDepends (PD.buildInfo exe)))})
     | pkg <- pkgs
     , let desc = bpDescription pkg
     , tool <- ["alex", "happy"]
@@ -245,6 +257,23 @@ localToolTargets projectRoot pkgs =
         , packageName desc `elem` names
         ]
     underscore c = if c == '-' then '_' else c
+
+-- | The executable of each package built from source that some component
+-- needs as a @build-tool-depends:@, with its target. These are also given the
+-- name that such a tool has when it is installed (see "Prebuilt"), which is
+-- what a hand-written rule refers to.
+localBuildTools :: FilePath -> [BuiltPackage] -> Map String String
+localBuildTools projectRoot pkgs =
+  Map.fromList
+    [ (name, "root//" ++ dirPart (rootRelativeDir projectRoot (bpDir pkg)) ++ ":" ++ nonLibraryTargetName "-exe" desc (PD.exeName exe))
+    | pkg <- pkgs
+    , let desc = bpDescription pkg
+    , exe <- PD.executables desc
+    , let name = unUnqualComponentName (PD.exeName exe)
+    , (packageName desc, PD.exeName exe) `elem` wantedBuildTools pkgs
+    ]
+  where
+    dirPart dir = if dir == "." then "" else dir
 
 -- | Every @pkg:exe@ named in any component's @build-tool-depends:@ across
 -- the given packages.

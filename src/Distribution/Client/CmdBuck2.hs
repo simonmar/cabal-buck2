@@ -67,6 +67,7 @@ import Distribution.Client.Buck2.Configure (configureComponents)
 import Distribution.Client.Buck2.Flags (Buck2Flags, buck2FlagOptions, defaultBuck2Flags, dependencyMode)
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
+  , localBuildTools
   , localToolTargets
   , projectTestOptions
   , wantedBuildTools
@@ -135,6 +136,7 @@ buck2Action flags extraArgs globalFlags = do
           (elaboratedShared buildCtx)
           (elaboratedPlanToExecute buildCtx)
           (localToolTargets projectRoot localPkgs)
+          (localBuildTools projectRoot localPkgs)
           (wantedBuildTools localPkgs)
 
       -- 'generatePrebuilt' already found and parsed every real @.conf@

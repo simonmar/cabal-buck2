@@ -98,7 +98,7 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
     localIndex :: LocalPackageIndex
     localIndex =
       Map.fromList
-        [ (packageName pkgDesc, (rootRelativeDir projectRoot (bpDir pkg), reexportOrigins pkgDesc))
+        [ (packageName pkgDesc, LocalPackage{lpDir = rootRelativeDir projectRoot (bpDir pkg), lpDescription = pkgDesc, lpReexports = reexportOrigins pkgDesc})
         | pkg <- pkgs
         , let pkgDesc = bpDescription pkg
         ]
@@ -236,6 +236,7 @@ componentValue :: SpecComponent -> Value
 componentValue c =
   VDict $
     [("kind", str (kindName (scKind c))), ("name", str (scName c))]
+      ++ [("exe_name", str exe) | Just exe <- [scExeName c]]
       ++ [("main_is", srcValue src) | Just src <- [scMainIs c]]
       ++ [("srcs", VDict [(m, srcValue src) | (m, src) <- scSrcs c]) | not (null (scSrcs c))]
       ++ listField "test_args" (scTestArgs c)

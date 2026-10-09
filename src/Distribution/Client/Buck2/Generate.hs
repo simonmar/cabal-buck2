@@ -16,6 +16,7 @@
 -- "Distribution.Client.Buck2.Write".
 module Distribution.Client.Buck2.Generate
   ( LocalPackageIndex
+  , LocalPackage (..)
   , AutogenFile (..)
   , PackageTargets (..)
   , generatePackageTargets
@@ -58,7 +59,7 @@ import Distribution.PackageDescription
   , cxxSources
   , dataDir
   , dataFiles
-  , defaultExtensions
+  , usedExtensions
   , defaultLanguage
   , extraLibs
   , hcOptions
@@ -78,7 +79,7 @@ import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.Dependency (depLibraries, depPkgName)
 import Distribution.Types.ExeDependency (ExeDependency (..))
 import Distribution.Simple.LocalBuildInfo (buildDir)
-import Distribution.Types.BuildType (BuildType (Configure))
+import Distribution.Types.BuildType (BuildType (Custom, Configure))
 import Distribution.Types.ModuleReexport (ModuleReexport (..))
 import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform, localPkgDescr, withPrograms), componentNameCLBIs, localUnitId)
 import Distribution.Types.PackageName (PackageName, unPackageName)
@@ -106,6 +107,7 @@ import Distribution.Simple.Utils (ordNub)
 
 import Language.Haskell.Extension (Language (Haskell98))
 
+import Distribution.Client.Buck2.LocalPackages (nonLibraryTargetName)
 import Distribution.Client.Buck2.Spec
 
 -- | Maps every local project package's name to the buck2 cell-relative
@@ -113,7 +115,13 @@ import Distribution.Client.Buck2.Spec
 -- a dependency on another local package can be turned into a fully
 -- qualified target label - plus, for each of its libraries, the other
 -- libraries its @reexported-modules@ re-export from (see 'libraryDeps').
-type LocalPackageIndex = Map PackageName (FilePath, Map LibraryName [(PackageName, LibraryName)])
+type LocalPackageIndex = Map PackageName LocalPackage
+
+data LocalPackage = LocalPackage
+  { lpDir :: FilePath
+  , lpDescription :: PackageDescription
+  , lpReexports :: Map LibraryName [(PackageName, LibraryName)]
+  }
 
 -- | A generated file that lives in the package's @cabal-buck2\/autogen@
 -- directory (a component's @cabal_macros.h@, the package's own
@@ -251,12 +259,16 @@ generateComponent
   -> ComponentTargets
 generateComponent localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject pkgDesc comp = case comp of
   CLib lib -> ifNotOnSkippedLib (libBuildInfo lib) (libTargetName (packageName pkgDesc) (libName lib)) Library $ library (libTargetName (packageName pkgDesc) (libName lib)) lib
-  CExe exe -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (exeName exe)) Executable $ executable exe
-  CTest test -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (testName test)) TestSuite $ testSuite test
-  CBench bench -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (benchmarkName bench)) Benchmark $ benchmark bench
+  CExe exe -> withExeName (unUnqualComponentName (exeName exe)) $ ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-exe" pkgDesc (exeName exe)) Executable $ executable exe
+  CTest test -> ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-test" pkgDesc (testName test)) TestSuite $ testSuite test
+  CBench bench -> ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-bench" pkgDesc (benchmarkName bench)) Benchmark $ benchmark bench
   CFLib _ -> skip "foreign library (not supported yet)"
   where
     skip = skipBecause []
+
+    -- Tools are found by the name of their file, which is that of the
+    -- executable, not necessarily that of its target.
+    withExeName exe ct = ct{ctSpec = [c{scExeName = if scName c == exe then Nothing else Just exe} | c <- ctSpec ct]}
 
     -- A component that wasn't configured, because the build plan doesn't
     -- include it. For the project's own packages that means a stanza that
@@ -279,6 +291,8 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
     -- build, not just a warning.
     ifNotOnSkippedLib bi targetName kind act
       | isNothing (lbiClbiFor pkgDesc componentLBIs comp) = notConfigured (kindName kind ++ " " ++ targetName)
+      | buildType pkgDesc == Custom =
+          skip (kindName kind ++ " " ++ targetName ++ " (build-type: Custom needs its Setup.hs to be run)")
       | unsupported : _ <- unsupportedSources bi =
           skip (kindName kind ++ " " ++ targetName ++ " (" ++ unsupported ++ " aren't supported)")
       | otherwise =
@@ -335,7 +349,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
     executable exe = mainIsComponent Executable targetName bi (getSymbolicPath (modulePath exe)) (const [])
       where
         bi = componentBuildInfo (CExe exe)
-        targetName = unUnqualComponentName (exeName exe)
+        targetName = nonLibraryTargetName "-exe" pkgDesc (exeName exe)
 
     -- A benchmark's own 'BenchmarkExeV10' is exactly 'TestSuiteExeV10's
     -- shape (a version-tagged main-is path over the same 'BuildInfo') -
@@ -353,7 +367,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
           )
       where
         bi = componentBuildInfo (CBench bench)
-        targetName = unUnqualComponentName (benchmarkName bench)
+        targetName = nonLibraryTargetName "-bench" pkgDesc (benchmarkName bench)
 
     testSuite test = case testInterface test of
       TestSuiteExeV10 _ver mainIs -> mainIsComponent TestSuite targetName bi (getSymbolicPath mainIs) testArgs
@@ -399,7 +413,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
           )
       where
         bi = componentBuildInfo (CTest test)
-        targetName = unUnqualComponentName (testName test)
+        targetName = nonLibraryTargetName "-test" pkgDesc (testName test)
         testArgs lbi = testSuiteArgs pkgDesc lbi test (Map.findWithDefault [] (packageName pkgDesc, componentName comp) projectTestOptions)
 
     problemsOf = fromLeft []
@@ -480,6 +494,7 @@ specComponent localIndex externalBuildTools kind name bi =
   SpecComponent
     { scKind = kind
     , scName = name
+    , scExeName = Nothing
     , scMainIs = Nothing
     , scSrcs = []
     , scTestArgs = []
@@ -487,7 +502,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCppOptions = cppOptions bi
     , -- As Cabal does, rather than GHC's own default (GHC2021).
       scLanguage = Just (prettyShow (fromMaybe Haskell98 (defaultLanguage bi)))
-    , scExtensions = map prettyShow (defaultExtensions bi)
+    , scExtensions = map prettyShow (usedExtensions bi)
     , scExtraLibraries = extraLibs bi
     , scDeps = map depSpec (libraryDeps localIndex bi)
     , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
@@ -510,13 +525,13 @@ specComponent localIndex externalBuildTools kind name bi =
         , depLibrary = case ln of
             LSubLibName n -> Just (unUnqualComponentName n)
             LMainLibName -> Nothing
-        , depDir = fst <$> Map.lookup pn localIndex
+        , depDir = lpDir <$> Map.lookup pn localIndex
         }
     -- A tool that's neither built by this project nor resolved to a real
     -- external binary can't be put on PATH by buck2: dropped, silently -
     -- most build-tool-depends are Setup.hs-time tools nothing needs on PATH.
     buildToolSpec (pn, exe) = case Map.lookup pn localIndex of
-      Just (dir, _) -> Just (LocalTool n dir)
+      Just lp -> Just (LocalTool (nonLibraryTargetName "-exe" (lpDescription lp) exe) (lpDir lp))
       Nothing
         | n `Set.member` externalBuildTools -> Just (ExternalTool n)
         | otherwise -> Nothing
@@ -613,7 +628,7 @@ libraryDeps localIndex bi = closeOverReexports [] directDeps
     closeOverReexports seen (p@(pn, ln) : rest)
       | p `elem` seen = closeOverReexports seen rest
       | otherwise =
-          let origins = fromMaybe [] (Map.lookup pn localIndex >>= Map.lookup ln . snd)
+          let origins = fromMaybe [] (Map.lookup pn localIndex >>= Map.lookup ln . lpReexports)
            in closeOverReexports (p : seen) (rest ++ origins)
 
 -- | Resolve each module in @hs-source-dirs@ to its real file, trying

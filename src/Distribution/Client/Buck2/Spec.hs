@@ -53,6 +53,8 @@ kindName Benchmark = "benchmark"
 data SpecComponent = SpecComponent
   { scKind :: ComponentKind
   , scName :: String
+  , scExeName :: Maybe String
+  -- ^ The name of an executable, when it isn't the name of its target.
   -- ^ Also the name of the buck2 target.
   , scMainIs :: Maybe Src
   -- ^ The main module's source; not for a library.
