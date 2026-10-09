@@ -47,11 +47,13 @@ import Distribution.PackageDescription
   , TestSuite (testInterface, testName)
   , TestSuiteInterface (..)
   , buildToolDepends
+  , asmOptions
   , asmSources
   , cSources
   , cmmSources
   , jsSources
   , cppOptions
+  , ccOptions
   , cxxOptions
   , cxxSources
   , dataDir
@@ -407,8 +409,7 @@ unsupportedSources :: BuildInfo -> [String]
 unsupportedSources bi =
   [ what
   | (what, files) <-
-      [ ("asm-sources", map getSymbolicPath (asmSources bi))
-      , ("js-sources", map getSymbolicPath (jsSources bi))
+      [ ("js-sources", map getSymbolicPath (jsSources bi))
       ]
   , not (null files)
   ]
@@ -493,6 +494,9 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
     , scCmmSources = map getSymbolicPath (cmmSources bi)
+    , scAsmSources = map getSymbolicPath (asmSources bi)
+    , scAsmOptions = asmOptions bi
+    , scCcOptions = ccOptions bi
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
     , scHscOptions = []

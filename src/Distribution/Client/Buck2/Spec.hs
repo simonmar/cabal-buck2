@@ -69,9 +69,12 @@ data SpecComponent = SpecComponent
   , scDeps :: [SpecDep]
   , scBuildTools :: [SpecBuildTool]
   , scCSources :: [FilePath]
+  , scCcOptions :: [String]
   , scCxxSources :: [FilePath]
   , scCxxOptions :: [String]
   , scCmmSources :: [FilePath]
+  , scAsmSources :: [FilePath]
+  , scAsmOptions :: [String]
   , scIncludeDirs :: [FilePath]
   , scHscOptions :: [String]
   -- ^ Defines for the C compiler of @hsc2hs@, which say what the code is

@@ -19,6 +19,7 @@ extra-source-files:
   test/fixtures/**/*.c
   test/fixtures/**/*.cmm
   test/fixtures/**/*.S
+  test/fixtures/**/*.js
   test/fixtures/**/*.ly
   test/fixtures/**/*.cabal
   test/fixtures/**/*.h

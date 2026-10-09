@@ -10,6 +10,8 @@ library
   hs-source-dirs:   src
   build-depends:    base
   cmm-sources:      cmm/Dep.cmm
+  asm-sources:      asm/Dep.S
+  asm-options:      -DASM
   default-language: Haskell2010
 
 -- Neither of these is in the build plan, as benchmarks are not enabled.
@@ -18,7 +20,7 @@ library bench-lib
   exposed-modules:  Dep
   hs-source-dirs:   src
   build-depends:    base
-  asm-sources:      asm/x.S
+  js-sources:       js/x.js
   default-language: Haskell2010
 
 benchmark bench

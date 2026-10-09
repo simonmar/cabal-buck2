@@ -354,6 +354,8 @@ sourceDeps project = do
   assertContains depBzlPath "'data/*.txt'" depBzl
   -- hsc2hs is told what it is compiling for.
   assertContains depBzlPath "'-D__GLASGOW_HASKELL__=" depBzl
+  assertContains depBzlPath "'asm_sources'" depBzl
+  assertContains depBzlPath "'asm_options'" depBzl
   assertContains depBzlPath "'cmm_sources'" depBzl
   assertContains depBzlPath "'cmm/Dep.cmm'" depBzl
   appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")

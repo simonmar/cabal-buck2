@@ -283,7 +283,7 @@ Things to know:
   and removes the packages that were unpacked for the previous run.
 * The tools that dependencies need to preprocess sources (`alex` and `happy`)
   are built by buck2 too, when the project needs them.
-* Components that use `asm-sources` or `js-sources` are not supported. They
+* Components that use `js-sources` are not supported. They
   are skipped with a warning, and so are the components that depend on them.
 * A package with a `configure` script is configured in its build directory
   by `cabal buck2`, and the headers it generates are part of the build. Other
