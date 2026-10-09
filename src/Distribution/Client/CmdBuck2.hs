@@ -43,7 +43,13 @@ import Distribution.Client.NixStyleOptions
   , defaultNixStyleFlags
   , nixStyleOptions
   )
+import Distribution.Client.ProjectConfig (ProjectConfig (..), ProjectConfigShared (..))
 import Distribution.Client.ProjectOrchestration
+import Distribution.Client.Targets (UserConstraint (..), UserConstraintScope (..))
+import Distribution.Solver.Types.ConstraintSource (ConstraintSource (ConstraintSourceUnknown))
+import Distribution.Solver.Types.PackageConstraint (PackageProperty (PackagePropertyVersion))
+import Distribution.Types.PackageName (mkPackageName)
+import Distribution.Version (alterVersion, earlierVersion, intersectVersionRanges, orLaterVersion)
 import Distribution.Client.ScriptUtils
   ( AcceptNoTargets (..)
   , TargetContext (..)
@@ -58,7 +64,7 @@ import Distribution.Client.Setup
 import Distribution.Simple.Command (CommandUI (..), usageAlternatives)
 import Distribution.Simple.Flag (fromFlagOrDefault, toFlag)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
-import Distribution.Simple.Utils (die', notice)
+import Distribution.Simple.Utils (cabalVersion, die', notice)
 import Distribution.Verbosity (normal)
 
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
@@ -105,6 +111,22 @@ buck2Command =
     , commandOptions = nixStyleOptions buck2FlagOptions
     }
 
+-- | The hooks of a package with a @Hooks@ build type are run by this program,
+-- through a hooks executable that has to be built with the same release of
+-- Cabal. So that a package can allow older releases (to be usable with older
+-- versions of cabal) it is solved for with this one.
+withHooksConstraint :: ProjectBaseContext -> ProjectBaseContext
+withHooksConstraint ctx =
+  ctx{projectConfig = projectConfig ctx <> mempty{projectConfigShared = mempty{projectConfigConstraints = [constraint]}}}
+  where
+    constraint =
+      ( UserConstraint
+          (UserAnySetupQualifier (mkPackageName "Cabal-hooks"))
+          (PackagePropertyVersion (intersectVersionRanges (orLaterVersion release) (earlierVersion (alterVersion (\v -> take 1 v ++ [v !! 1 + 1]) release))))
+      , ConstraintSourceUnknown
+      )
+    release = alterVersion (take 2) cabalVersion
+
 -- | Implement @cabal buck2@
 buck2Action :: NixStyleFlags Buck2Flags -> [String] -> GlobalFlags -> IO ()
 buck2Action flags extraArgs globalFlags = do
@@ -114,7 +136,7 @@ buck2Action flags extraArgs globalFlags = do
 
   withContextAndSelectors verbosity RejectNoTargets Nothing depsFlags ["all"] globalFlags BuildCommand $
     \targetCtx ctx targetSelectors -> do
-      baseCtx <- case targetCtx of
+      baseCtx <- withHooksConstraint <$> case targetCtx of
         ProjectContext -> return ctx
         GlobalContext -> return ctx
         ScriptContext path exemeta -> updateContextAndWriteProjectFile ctx path exemeta
