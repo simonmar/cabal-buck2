@@ -7,6 +7,7 @@ module Distribution.Client.Buck2.LocalPackages
   , planElab
   , builtLocalElabs
   , setupDependencyUnits
+  , prebuiltUnits
   , packageSourceDir
   , componentNamesFor
   , BuiltPackage (..)
@@ -46,7 +47,7 @@ import Distribution.Client.Types (confInstId)
 import Distribution.Client.Types.PackageLocation (PackageLocation (..))
 import Distribution.Types.UnitId (UnitId, newSimpleUnitId)
 
-import Distribution.Package (HasUnitId (installedUnitId), PackageName, packageId, packageName, unPackageName)
+import Distribution.Package (HasUnitId (installedUnitId), PackageInstalled (installedDepends), PackageName, packageId, packageName, unPackageName)
 import Distribution.PackageDescription (PackageDescription)
 import qualified Distribution.PackageDescription as PD
 import Distribution.Simple.InstallDirs (PathTemplate)
@@ -120,6 +121,24 @@ setupDependencyUnits mode plan =
     , -- GHC's own packages stay available.
       isJust (planElab dep)
     ]
+
+-- | The packages that the packages buck2 builds from source need to be built
+-- and linked, as the libraries and tools they depend on, and what those
+-- need. The setup scripts that cabal runs to build other packages (and
+-- what they need) are not among them, and having them would mean more than
+-- one version of some packages.
+prebuiltUnits :: DependencyMode -> ElaboratedInstallPlan -> Set.Set UnitId
+prebuiltUnits mode plan = closure Set.empty (concatMap deps (builtLocalElabs mode plan))
+  where
+    deps elab = [newSimpleUnitId (confInstId dep) | (dep, _) <- elabLibDependencies elab] ++ elabOrderExeDependencies elab
+    closure seen [] = seen
+    closure seen (uid : rest)
+      | uid `Set.member` seen = closure seen rest
+      | otherwise = closure (Set.insert uid seen) (next uid ++ rest)
+    next uid = case InstallPlan.lookup plan uid of
+      Just (InstallPlan.PreExisting ipkg) -> installedDepends ipkg
+      Just pkg | Just elab <- planElab pkg -> deps elab
+      _ -> []
 
 -- | How the dependencies of the project are built.
 data DependencyMode

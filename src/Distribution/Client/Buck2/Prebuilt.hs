@@ -91,12 +91,12 @@ import Distribution.Types.InstalledPackageInfo
       , sourceLibName
       )
   )
-import Distribution.Types.PackageName (PackageName)
+import Distribution.Types.LibraryName (LibraryName (LMainLibName, LSubLibName))
+import Distribution.Types.PackageName (PackageName, unPackageName)
 import Distribution.Types.UnitId (UnitId, unUnitId)
 import Distribution.Types.UnqualComponentName (UnqualComponentName, unUnqualComponentName)
 
 import Distribution.Client.Buck2.Fingerprint (ccFingerprint, ghcFingerprint)
-import Distribution.Client.Buck2.Generate (libTargetName)
 import Distribution.Client.Buck2.LocalPackages (ToolTarget (..), planElab)
 import Distribution.Client.Buck2.Starlark
 
@@ -139,7 +139,7 @@ generatePrebuilt
   -- this plan before it's even built. So every unit id here is either a
   -- GHC global\/boot package or one installed to the cabal store.
   -> Set UnitId
-  -- ^ The packages that only a setup script needs, which buck2 has no use for.
+  -- ^ The packages that buck2 needs (see 'prebuiltUnits'), from those in the plan.
   -> Map String ToolTarget
   -- ^ The preprocessors (@alex@, @happy@) that buck2 builds itself.
   -> Map String String
@@ -149,7 +149,7 @@ generatePrebuilt
   -- @build-tool-depends:@, across the whole project - see this
   -- function's own return-value haddock above.
   -> IO (Set String, [InstalledPackageInfo])
-generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan setupUnits toolTargets localTools wantedBuildTools = do
+generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan neededUnits toolTargets localTools wantedBuildTools = do
   ghcProg <-
     maybe (die' verbosity "cabal buck2: no 'ghc' program configured for this project - internal error.") return $
       lookupProgram ghcProgram (pkgConfigCompilerProgs shared)
@@ -165,7 +165,7 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan setupUnits
   globalDB <- getGlobalPackageDB verbosity ghcProg
   let globalRootAbs = takeDirectory globalDB
 
-      allUnitIds = ordNub [installedUnitId pkg | pkg <- InstallPlan.toList depsPlan, installedUnitId pkg `Set.notMember` setupUnits]
+      allUnitIds = ordNub [installedUnitId pkg | pkg <- InstallPlan.toList depsPlan, installedUnitId pkg `Set.member` neededUnits]
       paths =
         RepoPaths
           { rpGhcVersion = ghcVersionStr
@@ -425,21 +425,17 @@ buildToolExportCall name relPath =
     , ("visibility", strList ["PUBLIC"])
     ]
 
--- | Unlike a local package (one @haskell_library()@ per library, main or
--- named sub-library alike - see 'libTargetName'), a *prebuilt* one used
--- to get exactly one @haskell_prebuilt_library()@ per package name,
--- regardless of how many of its libraries were actually in the
--- dependency closure - a real bug, not just a theoretical gap: a package
--- with an internal sub-library (e.g. @attoparsec@'s own
--- @attoparsec-internal@) resolves to *two* units here, and buck2
--- rejected the second @haskell_prebuilt_library()@ outright as a
--- duplicate target the first time this was tried against a real,
--- large project. 'sourceLibName' (parsed straight from the @.conf@,
--- the exact same 'LibraryName' a local package's own 'libName' would
--- give) is what 'libTargetName' needs to tell them apart, the same way
--- it already does for local packages.
+-- | The target of a prebuilt library: the package name for its main library,
+-- and for a named one the package name too, as the name of a library is
+-- only unique within its package (see 'sourceLibName', which is parsed
+-- from the @.conf@ file).
 targetName :: ResolvedPackage -> String
-targetName p = libTargetName (packageName (rpInfo p)) (sourceLibName (rpInfo p))
+targetName p = case sourceLibName (rpInfo p) of
+  LMainLibName -> unPackageName (packageName (rpInfo p))
+  -- Named libraries of different packages share their names (@testlib@ is
+  -- common), and all of these targets are in one place. A package name can't
+  -- contain two hyphens in a row.
+  LSubLibName n -> unPackageName (packageName (rpInfo p)) ++ "--" ++ unUnqualComponentName n
 
 prebuiltCall :: RepoPaths -> Map UnitId String -> ResolvedPackage -> Call
 prebuiltCall paths uidToTarget p =

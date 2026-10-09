@@ -74,7 +74,7 @@ import Distribution.Client.Buck2.Flags (Buck2Flags, buck2FlagOptions, defaultBuc
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
   , localBuildTools
-  , setupDependencyUnits
+  , prebuiltUnits
   , localToolTargets
   , projectTestOptions
   , wantedBuildTools
@@ -158,7 +158,7 @@ buck2Action flags extraArgs globalFlags = do
           (cabalDirLayout baseCtx)
           (elaboratedShared buildCtx)
           (elaboratedPlanToExecute buildCtx)
-          (setupDependencyUnits mode (elaboratedPlanOriginal buildCtx))
+          (prebuiltUnits mode (elaboratedPlanOriginal buildCtx))
           (localToolTargets projectRoot localPkgs)
           (localBuildTools projectRoot localPkgs)
           (wantedBuildTools localPkgs)
