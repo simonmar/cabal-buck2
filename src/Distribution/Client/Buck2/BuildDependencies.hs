@@ -23,7 +23,7 @@ import Distribution.Client.ProjectPlanning hiding
 
 import Distribution.Simple.Utils (dieWithException, notice)
 
-import Distribution.Client.Buck2.LocalPackages (DependencyMode, builtLocalElabs, isBuiltLocally, planElab)
+import Distribution.Client.Buck2.LocalPackages (DependencyMode, builtLocalElabs, isBuiltLocally, planElab, setupDependencyUnits)
 import Distribution.Client.Buck2.Unpack (unpackInplaceSources)
 import Distribution.Client.Errors (CabalInstallException (ReportCannotPruneDependencies))
 
@@ -43,12 +43,14 @@ buildDependencies verbosity mode baseCtx targetSelectors = do
             Nothing
             targetSelectors
       let elaboratedPlan' = pruneInstallPlanToTargets TargetActionBuild targets elaboratedPlan
+          setupUnits = setupDependencyUnits mode elaboratedPlan
           excluded =
             Map.keysSet targets
               <> Set.fromList
                 [ elabUnitId elab
                 | Just elab <- map planElab (InstallPlan.toList elaboratedPlan')
                 , isBuiltLocally mode elab
+                , elabUnitId elab `Set.notMember` setupUnits
                 ]
       elaboratedPlan'' <-
         either (dieWithException verbosity . ReportCannotPruneDependencies . renderCannotPruneDependencies) return $

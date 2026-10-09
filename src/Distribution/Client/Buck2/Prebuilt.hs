@@ -30,6 +30,7 @@ import qualified Data.ByteString as BS
 import Data.Char (isHexDigit)
 import Data.List (stripPrefix)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 import System.Directory
   ( createDirectoryIfMissing
@@ -137,6 +138,8 @@ generatePrebuilt
   -- "Distribution.Client.Buck2.Generate" instead, and are excluded from
   -- this plan before it's even built. So every unit id here is either a
   -- GHC global\/boot package or one installed to the cabal store.
+  -> Set UnitId
+  -- ^ The packages that only a setup script needs, which buck2 has no use for.
   -> Map String ToolTarget
   -- ^ The preprocessors (@alex@, @happy@) that buck2 builds itself.
   -> Map String String
@@ -146,7 +149,7 @@ generatePrebuilt
   -- @build-tool-depends:@, across the whole project - see this
   -- function's own return-value haddock above.
   -> IO (Set String, [InstalledPackageInfo])
-generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan toolTargets localTools wantedBuildTools = do
+generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan setupUnits toolTargets localTools wantedBuildTools = do
   ghcProg <-
     maybe (die' verbosity "cabal buck2: no 'ghc' program configured for this project - internal error.") return $
       lookupProgram ghcProgram (pkgConfigCompilerProgs shared)
@@ -162,7 +165,7 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan toolTarget
   globalDB <- getGlobalPackageDB verbosity ghcProg
   let globalRootAbs = takeDirectory globalDB
 
-      allUnitIds = ordNub [installedUnitId pkg | pkg <- InstallPlan.toList depsPlan]
+      allUnitIds = ordNub [installedUnitId pkg | pkg <- InstallPlan.toList depsPlan, installedUnitId pkg `Set.notMember` setupUnits]
       paths =
         RepoPaths
           { rpGhcVersion = ghcVersionStr

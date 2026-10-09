@@ -6,6 +6,7 @@ module Distribution.Client.Buck2.LocalPackages
   , isBuiltLocally
   , planElab
   , builtLocalElabs
+  , setupDependencyUnits
   , packageSourceDir
   , componentNamesFor
   , BuiltPackage (..)
@@ -39,12 +40,13 @@ import Distribution.Client.ProjectPlanning.Types
   , elabComponentName
   , elabLibDependencies
   , elabOrderExeDependencies
+  , elabSetupDependencies
   )
 import Distribution.Client.Types (confInstId)
 import Distribution.Client.Types.PackageLocation (PackageLocation (..))
-import Distribution.Types.UnitId (newSimpleUnitId)
+import Distribution.Types.UnitId (UnitId, newSimpleUnitId)
 
-import Distribution.Package (PackageName, packageId, packageName, unPackageName)
+import Distribution.Package (HasUnitId (installedUnitId), PackageName, packageId, packageName, unPackageName)
 import Distribution.PackageDescription (PackageDescription)
 import qualified Distribution.PackageDescription as PD
 import Distribution.Simple.InstallDirs (PathTemplate)
@@ -104,6 +106,20 @@ builtLocalElabs mode plan =
     -- as a whole (one with a @Custom@ build type) also has the dependencies
     -- of its @Setup.hs@.
     libDependencies elab = [newSimpleUnitId (confInstId dep) | (dep, _) <- elabLibDependencies elab]
+
+-- | The packages (and what they need) that a @SetupHooks.hs@ of a package that
+-- buck2 builds from source needs. They are not built by buck2: cabal builds
+-- them, into its store, and the hooks are run from there.
+setupDependencyUnits :: DependencyMode -> ElaboratedInstallPlan -> Set.Set UnitId
+setupDependencyUnits mode plan =
+  Set.fromList
+    [ installedUnitId dep
+    | elab <- builtLocalElabs mode plan
+    , PD.buildType (elabPkgDescription elab) == PD.Hooks
+    , dep <- InstallPlan.dependencyClosure plan [newSimpleUnitId (confInstId cid) | (cid, _) <- elabSetupDependencies elab]
+    , -- GHC's own packages stay available.
+      isJust (planElab dep)
+    ]
 
 -- | How the dependencies of the project are built.
 data DependencyMode

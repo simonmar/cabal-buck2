@@ -17,6 +17,9 @@ import Control.Concurrent.STM
   , readTVarIO
   )
 
+import Distribution.Client.JobControl (newLock)
+import Distribution.Client.Setup (filterConfigureFlags)
+import Distribution.Client.SetupWrapper (InLibraryArgs (..), InLibraryLBI (..), SetupRunnerArgs (..), setupWrapper)
 import Distribution.Client.DistDirLayout
   ( DistDirLayout (distBuildDirectory)
   )
@@ -35,7 +38,7 @@ import Distribution.Client.Types.ReadyPackage (GenericReadyPackage (ReadyPackage
 import Distribution.Client.Utils (numberOfProcessors)
 import Distribution.Types.ParStrat (ParStratInstall, ParStratX (..))
 
-import Distribution.Package (PackageName, packageName, packageVersion)
+import Distribution.Package (PackageName, packageId, packageName, packageVersion)
 import Distribution.PackageDescription (PackageDescription)
 import qualified Distribution.PackageDescription as PD
 import Distribution.Simple.Compiler (PackageDBX (GlobalPackageDB))
@@ -45,7 +48,9 @@ import Distribution.Simple.Program.Builtin (builtinPrograms)
 import Distribution.Simple.Program.Db (prependProgramSearchPathNoLogging, restoreProgramDb, updateProgram, userSpecifyArgss)
 import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programVersion), simpleConfiguredProgram)
 import Distribution.Simple.Register (generateRegistrationInfo)
-import Distribution.Simple.Utils (info)
+import qualified Distribution.Simple.Setup as Cabal
+import Distribution.Simple.Program (defaultProgramDb)
+import Distribution.Simple.Utils (die', info)
 import Distribution.Types.InstalledPackageInfo (InstalledPackageInfo)
 import Distribution.Types.LocalBuildInfo
   ( LocalBuildInfo
@@ -175,7 +180,47 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi elab = do
       (ReadyPackage elab)
       shared
       commonFlags
-  InLibrary.configure inputs cfg
+  if buildType == PD.Hooks
+    then configureWithHooks verbosity distDirLayout plan shared ipi elab pkgDir cfg
+    else InLibrary.configure inputs cfg
+
+-- | Configure a package with a @Hooks@ build type: its hooks are in an
+-- executable that is built from its @SetupHooks.hs@ first, which is what
+-- 'setupWrapper' does.
+configureWithHooks
+  :: Verbosity
+  -> DistDirLayout
+  -> ElaboratedInstallPlan
+  -> ElaboratedSharedConfig
+  -> InstalledPackageIndex
+  -> ElaboratedConfiguredPackage
+  -> FilePath
+  -> Cabal.ConfigFlags
+  -> IO LocalBuildInfo
+configureWithHooks verbosity distDirLayout plan shared ipi elab pkgDir cfg = do
+  lock <- newLock
+  ipiVar <- newTVarIO ipi
+  let srcdir = makeSymbolicPath pkgDir
+      builddir = makeSymbolicPath (distBuildDirectory distDirLayout (elabDistDirParams shared elab) </> "build")
+      options = setupHsScriptOptions (ReadyPackage elab) plan shared distDirLayout srcdir builddir lock
+  res <-
+    setupWrapper
+      verbosity
+      options
+      (Just (elabPkgDescription elab))
+      (Cabal.configureCommand defaultProgramDb)
+      Cabal.configCommonFlags
+      (return . filterConfigureFlags cfg)
+      (const [])
+      (InLibraryArgs (InLibraryConfigureArgs shared (ReadyPackage elab) ipiVar))
+  case res of
+    InLibraryLBI lbi -> return lbi
+    NotInLibraryNoLBI ->
+      die' verbosity $
+        "cabal buck2: the Cabal library of "
+          ++ prettyShow (packageId elab)
+          ++ "'s setup dependencies doesn't match the one cabal-buck2 uses, so its hooks can't be run: it needs Cabal-hooks "
+          ++ "from the same release (add a lower bound on Cabal-hooks in its setup-depends)"
 
 -- | If @cname@ names a library component, produce the real, in-place
 -- 'InstalledPackageInfo' for it.
