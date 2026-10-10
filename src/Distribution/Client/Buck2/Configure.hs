@@ -17,6 +17,9 @@ import Control.Concurrent.STM
   , readTVarIO
   )
 
+import Distribution.Client.JobControl (newLock)
+import Distribution.Client.Setup (filterConfigureFlags)
+import Distribution.Client.SetupWrapper (InLibraryArgs (..), InLibraryLBI (..), SetupRunnerArgs (..), setupWrapper)
 import Distribution.Client.DistDirLayout
   ( DistDirLayout (distBuildDirectory)
   )
@@ -25,24 +28,29 @@ import qualified Distribution.Client.InstallPlan as InstallPlan
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.ProjectPlanning hiding (pruneInstallPlanToTargets)
 import Distribution.Client.ProjectPlanning.Types
-  ( elabDistDirParams
+  ( elabComponentName
+  , elabDistDirParams
   , elabExeDependencyPaths
+  , elabOrderExeDependencies
   , elabOrderLibDependencies
   )
 import Distribution.Client.Types.ReadyPackage (GenericReadyPackage (ReadyPackage))
 import Distribution.Client.Utils (numberOfProcessors)
 import Distribution.Types.ParStrat (ParStratInstall, ParStratX (..))
 
-import Distribution.Package (PackageName, packageName)
+import Distribution.Package (PackageName, packageId, packageName, packageVersion)
 import Distribution.PackageDescription (PackageDescription)
 import qualified Distribution.PackageDescription as PD
 import Distribution.Simple.Compiler (PackageDBX (GlobalPackageDB))
 import Distribution.Simple.PackageIndex (InstalledPackageIndex)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Simple.Program.Builtin (builtinPrograms)
-import Distribution.Simple.Program.Db (prependProgramSearchPathNoLogging, restoreProgramDb, userSpecifyArgss)
+import Distribution.Simple.Program.Db (prependProgramSearchPathNoLogging, restoreProgramDb, updateProgram, userSpecifyArgss)
+import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programVersion), simpleConfiguredProgram)
 import Distribution.Simple.Register (generateRegistrationInfo)
-import Distribution.Simple.Utils (info)
+import qualified Distribution.Simple.Setup as Cabal
+import Distribution.Simple.Program (defaultProgramDb)
+import Distribution.Simple.Utils (die', info)
 import Distribution.Types.InstalledPackageInfo (InstalledPackageInfo)
 import Distribution.Types.LocalBuildInfo
   ( LocalBuildInfo
@@ -51,13 +59,14 @@ import Distribution.Types.LocalBuildInfo
   , relocatable
   )
 import Distribution.Types.UnitId (UnitId)
+import Distribution.Types.UnqualComponentName (unUnqualComponentName)
 import Distribution.Utils.Path (makeSymbolicPath)
 import Distribution.Verbosity (defaultVerbosityHandles)
 
 import System.Directory (canonicalizePath)
 import System.FilePath ((</>))
 
-import Distribution.Client.Buck2.LocalPackages (componentNamesFor, isBuiltLocally, packageSourceDir)
+import Distribution.Client.Buck2.LocalPackages (DependencyMode, builtLocalElabs, componentNamesFor, isBuiltLocally, packageSourceDir, planElab)
 import Distribution.Client.Buck2.Schedule (runDependencyGraph)
 
 -- | Get a real 'LocalBuildInfo' for every component in the
@@ -73,13 +82,15 @@ import Distribution.Client.Buck2.Schedule (runDependencyGraph)
 -- this can take a while for projects with a lot of components to build.
 configureComponents
   :: Verbosity
+  -> DependencyMode
   -> ProjectBaseContext
   -> ProjectBuildContext
   -> InstalledPackageIndex
   -> IO (Map (PackageName, ComponentName) LocalBuildInfo)
-configureComponents verbosity baseCtx buildCtx installedIndex =
+configureComponents verbosity mode baseCtx buildCtx installedIndex =
   configureComponentsConcurrently
     verbosity
+    mode
     (distDirLayout baseCtx)
     (parStratNumJobs (buildSettingNumJobs (buildSettings baseCtx)))
     (pruneInstallPlanToTargets TargetActionBuild (targetsMap buildCtx) (elaboratedPlanOriginal buildCtx))
@@ -89,13 +100,14 @@ configureComponents verbosity baseCtx buildCtx installedIndex =
 -- | A real 'LocalBuildInfo' for one local (or quasi-local) *component*.
 localBuildInfoFor
   :: Verbosity
+  -> DependencyMode
   -> DistDirLayout
   -> ElaboratedInstallPlan
   -> ElaboratedSharedConfig
   -> InstalledPackageIndex
   -> ElaboratedConfiguredPackage
   -> IO LocalBuildInfo
-localBuildInfoFor verbosity distDirLayout plan shared ipi elab = do
+localBuildInfoFor verbosity mode distDirLayout plan shared ipi elab = do
   -- Real Cabal's own 'InLibrary.configure' falls back to *searching* the
   -- working directory for a @<pkgname>.cabal@ file whenever
   -- 'Cabal.configCabalFilePath' isn't set (see its own use of
@@ -128,12 +140,27 @@ localBuildInfoFor verbosity distDirLayout plan shared ipi elab = do
       -- top-level @configure@, which 'InLibrary.configure' skips - so
       -- without this the 'LocalBuildInfo' wouldn't have them, unlike one
       -- from a real @Setup configure@.
+      --
+      -- A tool that buck2 is going to build doesn't exist yet when the
+      -- component is configured, but Cabal wants to know that it is there
+      -- and of a version that suits: it is told so (the tool is put on the
+      -- @PATH@ of the compile actions that use it by buck2).
       progDb =
+        foldr updateProgram userProgDb builtTools
+      userProgDb =
         userSpecifyArgss (Map.toList (elabProgramArgs elab)) $
           prependProgramSearchPathNoLogging
             (elabExeDependencyPaths elab ++ elabProgramPathExtra elab)
             []
             (restoreProgramDb builtinPrograms (pkgConfigCompilerProgs shared))
+      builtTools =
+        [ (simpleConfiguredProgram name (FoundOnSystem name)){programVersion = Just (packageVersion depElab)}
+        | uid <- elabOrderExeDependencies elab
+        , Just depElab <- [InstallPlan.lookup plan uid >>= planElab]
+        , isBuiltLocally mode depElab
+        , Just (CExeName exe) <- [elabComponentName depElab]
+        , let name = unUnqualComponentName exe
+        ]
       buildType = PD.buildType (elabPkgDescription elab)
       inputs =
         InLibrary.libraryConfigureInputsFromElabPackage
@@ -153,7 +180,47 @@ localBuildInfoFor verbosity distDirLayout plan shared ipi elab = do
       (ReadyPackage elab)
       shared
       commonFlags
-  InLibrary.configure inputs cfg
+  if buildType == PD.Hooks
+    then configureWithHooks verbosity distDirLayout plan shared ipi elab pkgDir cfg
+    else InLibrary.configure inputs cfg
+
+-- | Configure a package with a @Hooks@ build type: its hooks are in an
+-- executable that is built from its @SetupHooks.hs@ first, which is what
+-- 'setupWrapper' does.
+configureWithHooks
+  :: Verbosity
+  -> DistDirLayout
+  -> ElaboratedInstallPlan
+  -> ElaboratedSharedConfig
+  -> InstalledPackageIndex
+  -> ElaboratedConfiguredPackage
+  -> FilePath
+  -> Cabal.ConfigFlags
+  -> IO LocalBuildInfo
+configureWithHooks verbosity distDirLayout plan shared ipi elab pkgDir cfg = do
+  lock <- newLock
+  ipiVar <- newTVarIO ipi
+  let srcdir = makeSymbolicPath pkgDir
+      builddir = makeSymbolicPath (distBuildDirectory distDirLayout (elabDistDirParams shared elab) </> "build")
+      options = setupHsScriptOptions (ReadyPackage elab) plan shared distDirLayout srcdir builddir lock
+  res <-
+    setupWrapper
+      verbosity
+      options
+      (Just (elabPkgDescription elab))
+      (Cabal.configureCommand defaultProgramDb)
+      Cabal.configCommonFlags
+      (return . filterConfigureFlags cfg)
+      (const [])
+      (InLibraryArgs (InLibraryConfigureArgs shared (ReadyPackage elab) ipiVar))
+  case res of
+    InLibraryLBI lbi -> return lbi
+    NotInLibraryNoLBI ->
+      die' verbosity $
+        "cabal buck2: the Cabal library of "
+          ++ prettyShow (packageId elab)
+          ++ "'s setup dependencies doesn't match the one cabal-buck2 uses, so its hooks can't be run: it needs Cabal-hooks "
+          ++ "from the same release (add a lower bound on Cabal-hooks in its setup-depends)"
 
 -- | If @cname@ names a library component, produce the real, in-place
 -- 'InstalledPackageInfo' for it.
@@ -170,6 +237,7 @@ libraryInstalledPackageInfo verbosity lbi pkgDesc cname = case cname of
 -- and the @-jNUM@ flag.
 configureComponentsConcurrently
   :: Verbosity
+  -> DependencyMode
   -> DistDirLayout
   -> Int
   -- ^ Maximum number of components to configure at once (from
@@ -178,7 +246,7 @@ configureComponentsConcurrently
   -> ElaboratedSharedConfig
   -> InstalledPackageIndex
   -> IO (Map (PackageName, ComponentName) LocalBuildInfo)
-configureComponentsConcurrently verbosity distDirLayout numJobs plan shared installedIndex = do
+configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared installedIndex = do
   numCaps <- getNumCapabilities
   info verbosity $ "cabal buck2: configuring components with up to " ++ show numJobs ++ " job(s)"
   let wantedCaps = min numJobs numberOfProcessors
@@ -189,8 +257,7 @@ configureComponentsConcurrently verbosity distDirLayout numJobs plan shared inst
       localElabs =
         Map.fromList
           [ (elabUnitId elab, elab)
-          | InstallPlan.Configured elab <- InstallPlan.toList plan
-          , isBuiltLocally elab
+          | elab <- builtLocalElabs mode plan
           ]
 
   indexVar <- newTVarIO installedIndex
@@ -200,7 +267,7 @@ configureComponentsConcurrently verbosity distDirLayout numJobs plan shared inst
     let elab = localElabs Map.! uid
         pkgDesc = elabPkgDescription elab
     idx <- readTVarIO indexVar
-    lbi <- localBuildInfoFor verbosity distDirLayout plan shared idx elab
+    lbi <- localBuildInfoFor verbosity mode distDirLayout plan shared idx elab
     for_ (componentNamesFor elab pkgDesc) $ \cname -> do
       mipi <- libraryInstalledPackageInfo verbosity lbi pkgDesc cname
       for_ mipi $ \ipi -> atomically $ modifyTVar' indexVar (PackageIndex.insert ipi)

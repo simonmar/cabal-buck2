@@ -10,6 +10,7 @@ module Distribution.Client.Buck2.Spec
   , SpecComponent (..)
   , Src (..)
   , SpecDep (..)
+  , SpecReexport (..)
   , SpecBuildTool (..)
   ) where
 
@@ -25,10 +26,15 @@ specSchemaVersion = 1
 -- that comes from Cabal rather than from buck2 conventions.
 data BuildSpec = BuildSpec
   { specPackageName :: String
+  , specPackageVersion :: String
   , specPackageDir :: FilePath
   -- ^ Relative to the buck2 cell root, @.@ at the root.
   , specGhcOptions :: [String]
   -- ^ Supplied by the project, not the @.cabal@ file.
+  , specDataDir :: FilePath
+  -- ^ The package's @data-dir@, relative to its directory.
+  , specDataFiles :: [FilePath]
+  -- ^ Its @data-files@, as patterns, relative to 'specDataDir'.
   , specComponents :: [SpecComponent]
   }
 
@@ -48,6 +54,8 @@ kindName Benchmark = "benchmark"
 data SpecComponent = SpecComponent
   { scKind :: ComponentKind
   , scName :: String
+  , scExeName :: Maybe String
+  -- ^ The name of an executable, when it isn't the name of its target.
   -- ^ Also the name of the buck2 target.
   , scMainIs :: Maybe Src
   -- ^ The main module's source; not for a library.
@@ -62,11 +70,25 @@ data SpecComponent = SpecComponent
   , scExtensions :: [String]
   , scExtraLibraries :: [String]
   , scDeps :: [SpecDep]
+  , scReexports :: [SpecReexport]
+  -- ^ Modules a library re-exports from the library of another package (or
+  -- another library of its own).
   , scBuildTools :: [SpecBuildTool]
   , scCSources :: [FilePath]
+  , scCcOptions :: [String]
   , scCxxSources :: [FilePath]
   , scCxxOptions :: [String]
+  , scCmmSources :: [FilePath]
+  , scAsmSources :: [FilePath]
+  , scAsmOptions :: [String]
   , scIncludeDirs :: [FilePath]
+  , scHscOptions :: [String]
+  -- ^ Defines for the C compiler of @hsc2hs@, which say what the code is
+  -- compiled for (GHC does this itself for Haskell code).
+  , scGeneratedIncludeDirs :: [FilePath]
+  -- ^ Directories, relative to the project root, with headers that the
+  -- package's @configure@ script generated (the build directory's version of
+  -- each relative 'scIncludeDirs').
   , scPkgconfig :: [String]
   }
 
@@ -84,6 +106,14 @@ data SpecDep = SpecDep
   , depDir :: Maybe FilePath
   -- ^ The package's directory (relative to the cell root) if it's built by
   -- this project.
+  }
+
+-- | A module that a library re-exports (@reexported-modules@) from a library
+-- it depends on.
+data SpecReexport = SpecReexport
+  { reModule :: String
+  , reOriginal :: String
+  , reFrom :: SpecDep
   }
 
 -- | An executable that a component's @build-tool-depends@ needs on @PATH@.

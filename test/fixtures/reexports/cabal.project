@@ -1,0 +1,3 @@
+packages: base-lib re-lib user
+
+active-repositories: :none

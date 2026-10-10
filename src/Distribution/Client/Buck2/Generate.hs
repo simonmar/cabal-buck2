@@ -16,6 +16,7 @@
 -- "Distribution.Client.Buck2.Write".
 module Distribution.Client.Buck2.Generate
   ( LocalPackageIndex
+  , LocalPackage (..)
   , AutogenFile (..)
   , PackageTargets (..)
   , generatePackageTargets
@@ -26,7 +27,7 @@ module Distribution.Client.Buck2.Generate
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
-import System.FilePath ((<.>), (</>))
+import System.FilePath (isRelative, makeRelative, normalise, (<.>), (</>))
 
 import Data.Either (fromLeft)
 import qualified Data.Map as Map
@@ -35,40 +36,57 @@ import qualified Data.Set as Set
 import qualified Distribution.Compat.NonEmptySet as NES
 import Distribution.Compiler (CompilerFlavor (GHC))
 import qualified Distribution.ModuleName as ModuleName
-import Distribution.Package (packageId, packageName)
+import Distribution.Package (packageId, packageName, packageVersion)
 import Distribution.PackageDescription
   ( Benchmark (benchmarkInterface, benchmarkName)
   , BenchmarkInterface (..)
   , BuildInfo
   , Executable (exeName, modulePath)
-  , Library (exposedModules, libBuildInfo, libName)
+  , Library (exposedModules, libBuildInfo, libName, reexportedModules)
   , LibraryName (..)
+  , library
+  , subLibraries
   , PackageDescription
   , TestSuite (testInterface, testName)
   , TestSuiteInterface (..)
   , buildToolDepends
+  , asmOptions
+  , asmSources
   , cSources
+  , cmmSources
+  , jsSources
   , cppOptions
+  , ccOptions
   , cxxOptions
   , cxxSources
-  , defaultExtensions
+  , dataDir
+  , dataFiles
+  , usedExtensions
   , defaultLanguage
   , extraLibs
   , hcOptions
   , hsSourceDirs
   , includeDirs
   , otherModules
+  , buildType
+  , lookupComponent
   , pkgBuildableComponents
   , pkgconfigDepends
   , targetBuildDepends
   )
 import Distribution.Simple.Compiler (compilerInfo)
+import qualified Distribution.InstalledPackageInfo as IPI
+import qualified Distribution.Simple.PackageIndex as PackageIndex
+import Distribution.Types.ExposedModule (ExposedModule (..))
 import Distribution.Types.Component (Component (..), componentBuildInfo, componentName)
-import Distribution.Types.ComponentLocalBuildInfo (ComponentLocalBuildInfo)
+import Distribution.Types.ComponentLocalBuildInfo (ComponentLocalBuildInfo (componentPackageDeps))
 import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.Dependency (depLibraries, depPkgName)
 import Distribution.Types.ExeDependency (ExeDependency (..))
-import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform, withPrograms), componentNameCLBIs, localUnitId)
+import Distribution.Simple.LocalBuildInfo (buildDir)
+import Distribution.Types.BuildType (BuildType (Custom, Configure))
+import Distribution.Types.ModuleReexport (ModuleReexport (..))
+import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform, installedPkgs, localPkgDescr, withPrograms), componentNameCLBIs, localUnitId)
 import Distribution.Types.PackageName (PackageName, unPackageName)
 import Distribution.Types.PkgconfigDependency (PkgconfigDependency (..))
 import Distribution.Types.PkgconfigName (unPkgconfigName)
@@ -76,6 +94,7 @@ import Distribution.Types.UnqualComponentName (unUnqualComponentName)
 import Distribution.Utils.Path (getSymbolicPath)
 
 import Distribution.Simple.Build.Macros (generateCabalMacrosHeader)
+import Distribution.Simple.PreProcess (platformDefines)
 import Distribution.Simple.Build.PathsModule (generatePathsModule)
 import Distribution.Simple.BuildPaths (autogenPathsModuleName)
 import Distribution.Simple.InstallDirs
@@ -91,14 +110,21 @@ import Distribution.Simple.Program.Db (lookupProgram)
 import Distribution.Simple.Program.Types (programOverrideArgs)
 import Distribution.Simple.Utils (ordNub)
 
+import Language.Haskell.Extension (Language (Haskell98))
+
+import Distribution.Client.Buck2.LocalPackages (nonLibraryTargetName)
 import Distribution.Client.Buck2.Spec
 
 -- | Maps every local project package's name to the buck2 cell-relative
 -- directory its @BUCK@ file lives in (@.@ for one at the project root), so
 -- a dependency on another local package can be turned into a fully
--- qualified target label - plus the set of other packages its main
--- library's @reexported-modules@ re-export from (see 'classifyDeps').
-type LocalPackageIndex = Map PackageName (FilePath, [PackageName])
+-- qualified target label.
+type LocalPackageIndex = Map PackageName LocalPackage
+
+data LocalPackage = LocalPackage
+  { lpDir :: FilePath
+  , lpDescription :: PackageDescription
+  }
 
 -- | A generated file that lives in the package's @cabal-buck2\/autogen@
 -- directory (a component's @cabal_macros.h@, the package's own
@@ -123,6 +149,8 @@ data PackageTargets = PackageTargets
   { ptSpec :: BuildSpec
   , ptComponentCount :: Int
   , ptAutogenFiles :: [AutogenFile]
+  , ptNotes :: [String]
+  -- ^ What was left out because the build plan doesn't include it.
   }
 
 -- | One component's contribution to a 'PackageTargets': its entry in the
@@ -132,13 +160,16 @@ data ComponentTargets = ComponentTargets
   { ctSpec :: [SpecComponent]
   , ctAutogen :: [AutogenFile]
   , ctWarnings :: [String]
+  -- ^ Problems: components that can't be built.
+  , ctNotes :: [String]
+  -- ^ Components left out because the build plan doesn't include them.
   }
 
 instance Semigroup ComponentTargets where
-  ComponentTargets s1 a1 w1 <> ComponentTargets s2 a2 w2 = ComponentTargets (s1 ++ s2) (a1 ++ a2) (w1 ++ w2)
+  ComponentTargets s1 a1 w1 n1 <> ComponentTargets s2 a2 w2 n2 = ComponentTargets (s1 ++ s2) (a1 ++ a2) (w1 ++ w2) (n1 ++ n2)
 
 instance Monoid ComponentTargets where
-  mempty = ComponentTargets [] [] []
+  mempty = ComponentTargets [] [] [] []
 
 componentTargets :: SpecComponent -> [AutogenFile] -> ComponentTargets
 componentTargets component files = mempty{ctSpec = [component], ctAutogen = files}
@@ -151,6 +182,8 @@ componentTargets component files = mempty{ctSpec = [component], ctAutogen = file
 generatePackageTargets
   :: LocalPackageIndex
   -> FilePath
+  -- ^ The project root.
+  -> FilePath
   -- ^ The package's own buck2 cell-relative directory (@.@ at the project
   -- root).
   -> Map (PackageName, ComponentName) LocalBuildInfo
@@ -162,36 +195,36 @@ generatePackageTargets
   -> Map (PackageName, ComponentName) [PathTemplate]
   -- ^ The project's @test-options:@ for each test-suite (see 'testSuiteArgs').
   -> Set FilePath
+  -> Set (PackageName, LibraryName)
+  -- ^ Libraries (of any package) that don't get a rule: a component that
+  -- depends on one doesn't either.
+  -> Bool
+  -- ^ Whether this is a package of the project, as opposed to a dependency
+  -- that is built like one. A dependency has components that nothing
+  -- needs (its tests, say), which are skipped without a warning.
   -> PackageDescription
-  -> (Maybe PackageTargets, [String])
-generatePackageTargets localIndex rootRelPkgDir componentLBIs externalBuildTools projectTestOptions sources pkgDesc =
+  -> (PackageTargets, [String])
+generatePackageTargets localIndex projectRoot rootRelPkgDir componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject pkgDesc =
   (targets, concatMap ctWarnings results)
   where
-    generate = generateComponent localIndex componentLBIs externalBuildTools projectTestOptions sources pkgDesc
-    comps = pkgBuildableComponents pkgDesc
+    generate = generateComponent localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject pkgDesc
+    comps = map configured (pkgBuildableComponents pkgDesc)
 
-    -- Worked out ahead of the other components, so that one that
-    -- build-depends on a library of this package that won't get a rule
-    -- (unresolvable modules) can skip itself too, instead of emitting a
-    -- rule whose @deps@ references a target that was never generated -
-    -- buck2 fails that outright at analysis time ("Unknown target"), for
-    -- the *entire* build, the same class of problem 'resolveModules'
-    -- exists to avoid for a single component's own missing source file.
-    -- Libraries themselves never depend on this set.
-    skippedLibs =
-      Set.fromList [libName lib | comp@(CLib lib) <- comps, null (ctSpec (generate Set.empty comp))]
+    -- The component as configuring left it: with what a @configure@ script
+    -- found (in a @.buildinfo@ file) added to it.
+    configured comp = fromMaybe comp $ do
+      (lbi, _) <- lbiClbiFor pkgDesc componentLBIs comp
+      lookupComponent (localPkgDescr lbi) (componentName comp)
 
-    results = map (generate skippedLibs) comps
+    results = map generate comps
     components = concatMap ctSpec results
-    targets
-      | null components = Nothing
-      | otherwise =
-          Just
-            PackageTargets
-              { ptSpec = packageSpec pkgDesc rootRelPkgDir (packageGhcOptions pkgDesc componentLBIs) components
-              , ptComponentCount = length components
-              , ptAutogenFiles = dedupAutogenFiles (concatMap ctAutogen results)
-              }
+    targets =
+      PackageTargets
+        { ptSpec = packageSpec pkgDesc rootRelPkgDir (packageGhcOptions pkgDesc componentLBIs) components
+        , ptComponentCount = length components
+        , ptAutogenFiles = dedupAutogenFiles (concatMap ctAutogen results)
+        , ptNotes = concatMap ctNotes results
+        }
 
 -- | Look up a component's 'LocalBuildInfo' and
 -- 'ComponentLocalBuildInfo' -- 'Nothing' if either lookup fails
@@ -217,57 +250,87 @@ dedupAutogenFiles files =
 
 generateComponent
   :: LocalPackageIndex
+  -> FilePath
   -> Map (PackageName, ComponentName) LocalBuildInfo
   -> Set String
   -> Map (PackageName, ComponentName) [PathTemplate]
   -> Set FilePath
+  -> Set (PackageName, LibraryName)
+  -> Bool
   -> PackageDescription
-  -> Set LibraryName
   -> Component
   -> ComponentTargets
-generateComponent localIndex componentLBIs externalBuildTools projectTestOptions sources pkgDesc skippedLibs comp = case comp of
-  CLib lib -> library (libTargetName (packageName pkgDesc) (libName lib)) lib
-  CExe exe -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (exeName exe)) Executable $ executable exe
-  CTest test -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (testName test)) TestSuite $ testSuite test
-  CBench bench -> ifNotOnSkippedLib (componentBuildInfo comp) (unUnqualComponentName (benchmarkName bench)) Benchmark $ benchmark bench
+generateComponent localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject pkgDesc comp = case comp of
+  CLib lib -> ifNotOnSkippedLib (libBuildInfo lib) (libTargetName (packageName pkgDesc) (libName lib)) Library $ library (libTargetName (packageName pkgDesc) (libName lib)) lib
+  CExe exe -> withExeName (unUnqualComponentName (exeName exe)) $ ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-exe" pkgDesc (exeName exe)) Executable $ executable exe
+  CTest test -> ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-test" pkgDesc (testName test)) TestSuite $ testSuite test
+  CBench bench -> ifNotOnSkippedLib (componentBuildInfo comp) (nonLibraryTargetName "-bench" pkgDesc (benchmarkName bench)) Benchmark $ benchmark bench
   CFLib _ -> skip "foreign library (not supported yet)"
   where
     skip = skipBecause []
+
+    -- Tools are found by the name of their file, which is that of the
+    -- executable, not necessarily that of its target.
+    withExeName exe ct = ct{ctSpec = [c{scExeName = if scName c == exe then Nothing else Just exe} | c <- ctSpec ct]}
+
+    -- A component that wasn't configured, because the build plan doesn't
+    -- include it. For the project's own packages that means a stanza that
+    -- isn't enabled, which the user may want to know, but is not an error.
+    notConfigured what
+      | inProject = mempty{ctNotes = ["cabal buck2: no targets for " ++ what ++ " in package " ++ unPackageName (packageName pkgDesc) ++ " (not in the build plan: is its stanza enabled?)"]}
+      | otherwise = mempty
 
     -- Skip a component, with the warnings for the problems that led to it
     -- followed by the skip itself.
     skipBecause problems why =
       mempty{ctWarnings = problems ++ ["cabal buck2: skipping " ++ why ++ " in package " ++ unPackageName (packageName pkgDesc)]}
 
-    -- A component that build-depends on one of *this same package's*
-    -- own libraries, when that library was itself skipped (see
-    -- 'skippedLibs'), can't be built either - it would emit a rule
-    -- whose own @deps@ references a target that was never generated,
-    -- which buck2 rejects outright ("Unknown target") at analysis time
-    -- for the whole build, not just a warning. cabal-testsuite's own
-    -- @test-runtime-deps@ executable (build-depends on cabal-testsuite's
-    -- own library) is exactly this case.
-    ifNotOnSkippedLib bi targetName kind act =
-      case [ln | d <- targetBuildDepends bi, depPkgName d == packageName pkgDesc, ln <- NES.toList (depLibraries d), ln `Set.member` skippedLibs] of
-        (ln : _) ->
-          skip
-            ( kindName kind
-                ++ " "
-                ++ targetName
-                ++ " (depends on "
-                ++ libTargetName (packageName pkgDesc) ln
-                ++ ", itself skipped)"
-            )
-        [] -> act
+    -- A component the build plan doesn't include is left out without
+    -- further ado, whatever it needs. Otherwise, a component that
+    -- build-depends on a library that was skipped (see
+    -- 'skippedLibs') can't be built either - it would emit a rule whose
+    -- own @deps@ references a target that was never generated, which buck2
+    -- rejects outright ("Unknown target") at analysis time for the whole
+    -- build, not just a warning.
+    ifNotOnSkippedLib bi targetName kind act
+      | isNothing (lbiClbiFor pkgDesc componentLBIs comp) = notConfigured (kindName kind ++ " " ++ targetName)
+      | buildType pkgDesc == Custom =
+          skip (kindName kind ++ " " ++ targetName ++ " (build-type: Custom needs its Setup.hs to be run)")
+      | unsupported : _ <- unsupportedSources bi =
+          skip (kindName kind ++ " " ++ targetName ++ " (" ++ unsupported ++ " aren't supported)")
+      | otherwise =
+          case [(dp, ln) | d <- targetBuildDepends bi, let dp = depPkgName d, ln <- NES.toList (depLibraries d), (dp, ln) `Set.member` skippedLibs] of
+            ((dp, ln) : _) ->
+              skip
+                ( kindName kind
+                    ++ " "
+                    ++ targetName
+                    ++ " (depends on "
+                    ++ libTargetName dp ln
+                    ++ ", itself skipped)"
+                )
+            [] -> act
 
     library targetName lib = case lbiClbiFor pkgDesc componentLBIs comp of
-      Nothing -> skip ("library " ++ targetName ++ " (no LocalBuildInfo found for it in the elaborated build plan)")
+      Nothing -> notConfigured ("library " ++ targetName)
       Just (lbi, clbi) -> case resolveModules sources pkgDesc (Just (lbi, clbi)) bi (exposedModules lib ++ otherModules bi) of
         Left problems -> skipBecause problems ("library " ++ targetName ++ " (couldn't resolve all its modules)")
         Right (srcs, srcAutogen) ->
-          componentTargets
-            (specComponent localIndex externalBuildTools Library targetName bi){scSrcs = srcs}
-            (macrosHeader targetName pkgDesc lbi clbi : srcAutogen)
+          let origins = reexportOrigins localIndex pkgDesc lbi clbi lib
+              shims = reexportShims targetName [r | (r, Nothing) <- origins]
+              -- A library with no modules (a compatibility package, say) has
+              -- nothing to build, which a rule can't have.
+              extra
+                | null srcs && null shims = [(ModuleName.fromString "CabalBuck2Empty", emptyModule targetName)]
+                | otherwise = shims
+           in componentTargets
+                (specComponent localIndex externalBuildTools Library targetName bi)
+                  { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
+                  , scReexports = [SpecReexport (prettyShow (moduleReexportName r)) (prettyShow (moduleReexportOriginalName r)) (specDep localIndex o) | (r, Just o) <- origins]
+                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi
+                  , scHscOptions = platformDefines lbi
+                  }
+                (macrosHeader targetName pkgDesc lbi clbi : srcAutogen ++ map snd extra)
       where
         bi = libBuildInfo lib
 
@@ -276,13 +339,13 @@ generateComponent localIndex componentLBIs externalBuildTools projectTestOptions
     -- arguments.
     executableLike kind targetName lbi clbi bi mainSrc otherSrcs testArgs srcAutogen =
       componentTargets
-        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs}
+        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs, scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi, scHscOptions = platformDefines lbi}
         (macrosHeader targetName pkgDesc lbi clbi : srcAutogen)
 
     -- The shape shared by an executable, an @exitcode-stdio-1.0@
     -- test-suite and benchmark: a @main-is@ file over the @other-modules@.
     mainIsComponent kind targetName bi mainIs extra = case lbiClbiFor pkgDesc componentLBIs comp of
-      Nothing -> skip (kindName kind ++ " " ++ targetName ++ " (no LocalBuildInfo found for it in the elaborated build plan)")
+      Nothing -> notConfigured (kindName kind ++ " " ++ targetName)
       Just (lbi, clbi) -> case (resolveMainIs sources bi mainIs, resolveModules sources pkgDesc (Just (lbi, clbi)) bi (otherModules bi)) of
         (Right mainSrc, Right (otherSrcs, srcAutogen)) ->
           executableLike kind targetName lbi clbi bi (SrcFile mainSrc) otherSrcs (extra lbi) srcAutogen
@@ -292,7 +355,7 @@ generateComponent localIndex componentLBIs externalBuildTools projectTestOptions
     executable exe = mainIsComponent Executable targetName bi (getSymbolicPath (modulePath exe)) (const [])
       where
         bi = componentBuildInfo (CExe exe)
-        targetName = unUnqualComponentName (exeName exe)
+        targetName = nonLibraryTargetName "-exe" pkgDesc (exeName exe)
 
     -- A benchmark's own 'BenchmarkExeV10' is exactly 'TestSuiteExeV10's
     -- shape (a version-tagged main-is path over the same 'BuildInfo') -
@@ -310,7 +373,7 @@ generateComponent localIndex componentLBIs externalBuildTools projectTestOptions
           )
       where
         bi = componentBuildInfo (CBench bench)
-        targetName = unUnqualComponentName (benchmarkName bench)
+        targetName = nonLibraryTargetName "-bench" pkgDesc (benchmarkName bench)
 
     testSuite test = case testInterface test of
       TestSuiteExeV10 _ver mainIs -> mainIsComponent TestSuite targetName bi (getSymbolicPath mainIs) testArgs
@@ -341,7 +404,7 @@ generateComponent localIndex componentLBIs externalBuildTools projectTestOptions
       -- even type-check (@Distribution.TestSuite@ lives in the @Cabal@
       -- library itself).
       TestSuiteLibV09 _ver testModule -> case lbiClbiFor pkgDesc componentLBIs comp of
-        Nothing -> skip ("test-suite " ++ targetName ++ " (no LocalBuildInfo found for it in the elaborated build plan)")
+        Nothing -> notConfigured ("test-suite " ++ targetName)
         Just (lbi, clbi) -> case (resolveModules sources pkgDesc (Just (lbi, clbi)) bi [testModule], resolveModules sources pkgDesc (Just (lbi, clbi)) bi (otherModules bi)) of
           (Right (testModSrc, testModAutogen), Right (otherSrcs, otherAutogen)) ->
             let (stubSrc, stubFile) = detailedTestStub targetName testModule
@@ -356,18 +419,75 @@ generateComponent localIndex componentLBIs externalBuildTools projectTestOptions
           )
       where
         bi = componentBuildInfo (CTest test)
-        targetName = unUnqualComponentName (testName test)
+        targetName = nonLibraryTargetName "-test" pkgDesc (testName test)
         testArgs lbi = testSuiteArgs pkgDesc lbi test (Map.findWithDefault [] (packageName pkgDesc, componentName comp) projectTestOptions)
 
     problemsOf = fromLeft []
+
+-- | Kinds of source that a component has, that aren't built (yet).
+unsupportedSources :: BuildInfo -> [String]
+unsupportedSources bi =
+  [ what
+  | (what, files) <-
+      [ ("js-sources", map getSymbolicPath (jsSources bi))
+      ]
+  , not (null files)
+  ]
+
+-- | A module with nothing in it, for a library to have one.
+emptyModule :: String -> AutogenFile
+emptyModule targetName =
+  AutogenFile
+    { autogenName = targetName ++ "-empty"
+    , autogenPath = "empty" </> targetName </> "CabalBuck2Empty.hs"
+    , autogenContents = "-- @generated by `cabal buck2` - do not edit by hand.\nmodule CabalBuck2Empty () where\n"
+    }
+
+-- | A module that a library re-exports under another name
+-- (@reexported-modules: A as B@, with @A@ one of its own modules) as a module
+-- of its own that does that.
+reexportShims :: String -> [ModuleReexport] -> [(ModuleName.ModuleName, AutogenFile)]
+reexportShims targetName reexports =
+  [ ( new
+    , AutogenFile
+        { autogenName = targetName ++ "-reexport-" ++ prettyShow new
+        , autogenPath = "reexports" </> targetName </> ModuleName.toFilePath new <.> "hs"
+        , autogenContents =
+            unlines
+              [ "-- @generated by `cabal buck2` - do not edit by hand."
+              , "module " ++ prettyShow new ++ " (module " ++ prettyShow old ++ ") where"
+              , ""
+              , "import " ++ prettyShow old
+              ]
+        }
+    )
+  | ModuleReexport{moduleReexportOriginalName = old, moduleReexportName = new} <- reexports
+  , new /= old
+  ]
+
+-- | Where a @configure@ script (for a package with the @Configure@ build type)
+-- put the headers it generated: in the build directory, in a directory like
+-- each of the package's relative @include-dirs@.
+generatedIncludeDirs :: FilePath -> PackageDescription -> LocalBuildInfo -> BuildInfo -> [FilePath]
+generatedIncludeDirs projectRoot pkgDesc lbi bi
+  | buildType pkgDesc == Configure =
+      [ makeRelative projectRoot (getSymbolicPath (buildDir lbi)) </> dir
+      | d <- includeDirs bi
+      , let dir = getSymbolicPath d
+      , isRelative dir
+      ]
+  | otherwise = []
 
 -- | A package's build spec.
 packageSpec :: PackageDescription -> FilePath -> [String] -> [SpecComponent] -> BuildSpec
 packageSpec pkgDesc rootRelPkgDir projectGhcOptions components =
   BuildSpec
     { specPackageName = unPackageName (packageName pkgDesc)
+    , specPackageVersion = prettyShow (packageVersion pkgDesc)
     , specPackageDir = rootRelPkgDir
     , specGhcOptions = projectGhcOptions
+    , specDataDir = getSymbolicPath (dataDir pkgDesc)
+    , specDataFiles = map getSymbolicPath (dataFiles pkgDesc)
     , specComponents = components
     }
 
@@ -378,36 +498,37 @@ specComponent localIndex externalBuildTools kind name bi =
   SpecComponent
     { scKind = kind
     , scName = name
+    , scExeName = Nothing
     , scMainIs = Nothing
     , scSrcs = []
     , scTestArgs = []
     , scGhcOptions = hcOptions GHC bi
     , scCppOptions = cppOptions bi
-    , scLanguage = prettyShow <$> defaultLanguage bi
-    , scExtensions = map prettyShow (defaultExtensions bi)
+    , -- As Cabal does, rather than GHC's own default (GHC2021).
+      scLanguage = Just (prettyShow (fromMaybe Haskell98 (defaultLanguage bi)))
+    , scExtensions = map prettyShow (usedExtensions bi)
     , scExtraLibraries = extraLibs bi
-    , scDeps = map depSpec (libraryDeps localIndex bi)
+    , scDeps = map (specDep localIndex) (libraryDeps bi)
+    , scReexports = []
     , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
+    , scCmmSources = map getSymbolicPath (cmmSources bi)
+    , scAsmSources = map getSymbolicPath (asmSources bi)
+    , scAsmOptions = asmOptions bi
+    , scCcOptions = ccOptions bi
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
+    , scHscOptions = []
+    , scGeneratedIncludeDirs = []
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
     }
   where
-    depSpec (pn, ln) =
-      SpecDep
-        { depPackage = unPackageName pn
-        , depLibrary = case ln of
-            LSubLibName n -> Just (unUnqualComponentName n)
-            LMainLibName -> Nothing
-        , depDir = fst <$> Map.lookup pn localIndex
-        }
     -- A tool that's neither built by this project nor resolved to a real
     -- external binary can't be put on PATH by buck2: dropped, silently -
     -- most build-tool-depends are Setup.hs-time tools nothing needs on PATH.
     buildToolSpec (pn, exe) = case Map.lookup pn localIndex of
-      Just (dir, _) -> Just (LocalTool n dir)
+      Just lp -> Just (LocalTool (nonLibraryTargetName "-exe" (lpDescription lp) exe) (lpDir lp))
       Nothing
         | n `Set.member` externalBuildTools -> Just (ExternalTool n)
         | otherwise -> Nothing
@@ -477,35 +598,61 @@ libTargetName :: PackageName -> LibraryName -> String
 libTargetName pn LMainLibName = unPackageName pn
 libTargetName _ (LSubLibName n) = unUnqualComponentName n
 
--- | Every library a component depends on: its @build-depends@ (each of which may name
--- more than one library of a package via @pkg:sublib@ - see
--- 'depLibraries'), closed over the reexports of local packages.
-libraryDeps :: LocalPackageIndex -> BuildInfo -> [(PackageName, LibraryName)]
-libraryDeps localIndex bi = closeOverReexports [] directDeps
+-- | Every library a component depends on: its @build-depends@, each of which
+-- may name more than one library of a package via @pkg:sublib@ - see
+-- 'depLibraries'.
+libraryDeps :: BuildInfo -> [(PackageName, LibraryName)]
+libraryDeps bi =
+  ordNub
+    [ (depPkgName d, ln)
+    | d <- targetBuildDepends bi
+    , ln <- NES.toList (depLibraries d)
+    ]
+
+-- | The library, or the package's main one, that a dependency names.
+specDep :: LocalPackageIndex -> (PackageName, LibraryName) -> SpecDep
+specDep localIndex (pn, ln) =
+  SpecDep
+    { depPackage = unPackageName pn
+    , depLibrary = case ln of
+        LSubLibName n -> Just (unUnqualComponentName n)
+        LMainLibName -> Nothing
+    , depDir = lpDir <$> Map.lookup pn localIndex
+    }
+
+-- | Where a library's @reexported-modules@ come from: the library of another
+-- package, or another library of its own package, that it depends on - for a
+-- module named without its package, as Cabal resolves it, the first
+-- dependency that has the module. Those that come from the library itself
+-- are 'Nothing'.
+reexportOrigins :: LocalPackageIndex -> PackageDescription -> LocalBuildInfo -> ComponentLocalBuildInfo -> Library -> [(ModuleReexport, Maybe (PackageName, LibraryName))]
+reexportOrigins localIndex pkgDesc lbi clbi lib =
+  [ (r, origin)
+  | r <- reexportedModules lib
+  , let origin = case moduleReexportOriginalPackage r of
+          Just pn
+            | pn == packageName pkgDesc -> Nothing
+            | otherwise -> Just (pn, LMainLibName)
+          Nothing -> find (/= self) (providers (moduleReexportOriginalName r))
+  ]
   where
-    directDeps =
-      ordNub
-        [ (depPkgName d, ln)
-        | d <- targetBuildDepends bi
-        , ln <- NES.toList (depLibraries d)
-        ]
-    -- A local package's buck2 haskell_library() rule only ever declares
-    -- its own real source modules - unlike a real GHC package db entry,
-    -- it has no way to also claim modules reexported (`reexported-
-    -- modules:` in the .cabal file) from elsewhere. So a component that
-    -- depends on a local package with reexports (e.g. `Cabal` re-
-    -- exporting a chunk of `Cabal-syntax`) needs the reexport's origin
-    -- package added as an explicit direct dependency too, or - once
-    -- compile.bzl's `-hide-all-packages` is in effect - GHC can't find
-    -- the reexported module at all: "Could not load module ...". This
-    -- closure adds those origins (transitively, in case a reexporting
-    -- package itself depends on another reexporting package).
-    closeOverReexports seen [] = seen
-    closeOverReexports seen (p@(pn, _) : rest)
-      | p `elem` seen = closeOverReexports seen rest
-      | otherwise =
-          let origins = maybe [] snd (Map.lookup pn localIndex)
-           in closeOverReexports (p : seen) (rest ++ [(o, LMainLibName) | o <- origins])
+    self = (packageName pkgDesc, libName lib)
+    providers m = localProviders m ++ installedProviders m
+    localProviders m =
+      [ (pn, ln)
+      | (pn, ln) <- libraryDeps (libBuildInfo lib)
+      , Just lp <- [Map.lookup pn localIndex]
+      , l <- libsOf (lpDescription lp)
+      , libName l == ln
+      , m `elem` (exposedModules l ++ map moduleReexportName (reexportedModules l))
+      ]
+    installedProviders m =
+      [ (packageName ipi, IPI.sourceLibName ipi)
+      | (uid, _) <- componentPackageDeps clbi
+      , Just ipi <- [PackageIndex.lookupUnitId (installedPkgs lbi) uid]
+      , m `elem` map exposedName (IPI.exposedModules ipi)
+      ]
+    libsOf desc = maybeToList (library desc) ++ subLibraries desc
 
 -- | Resolve each module in @hs-source-dirs@ to its real file, trying
 -- @.hs@\/@.lhs@\/@.hsc@ (and the other extensions buck2\/haskell.bzl knows
@@ -613,10 +760,10 @@ detailedTestStub targetName testModule = (SrcAutogen name, file)
 -- own srcs-resolution (@_resolve_src@) knows to run through
 -- hsc2hs()\/alex()\/happy().
 moduleCandidates :: BuildInfo -> ModuleName.ModuleName -> [FilePath]
-moduleCandidates bi m = [dir </> ModuleName.toFilePath m <.> ext | dir <- sourceDirs bi, ext <- ["hs", "lhs", "hsc", "x", "y"]]
+moduleCandidates bi m = [normalise (dir </> ModuleName.toFilePath m <.> ext) | dir <- sourceDirs bi, ext <- ["hs", "lhs", "hsc", "x", "y", "ly"]]
 
 mainIsCandidates :: BuildInfo -> FilePath -> [FilePath]
-mainIsCandidates bi mainIs = [dir </> mainIs | dir <- sourceDirs bi]
+mainIsCandidates bi mainIs = [normalise (dir </> mainIs) | dir <- sourceDirs bi]
 
 firstExisting :: Set FilePath -> [FilePath] -> Maybe FilePath
 firstExisting sources = find (`Set.member` sources)

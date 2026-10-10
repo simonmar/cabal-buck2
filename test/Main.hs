@@ -12,6 +12,7 @@ import System.Directory
   ( copyFile
   , createDirectoryIfMissing
   , doesDirectoryExist
+  , doesFileExist
   , findExecutable
   , getTemporaryDirectory
   , listDirectory
@@ -21,9 +22,10 @@ import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..), exitFailure)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
-import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode, getCurrentPid)
+import System.Process (CreateProcess (..), callProcess, getCurrentPid, proc, readCreateProcessWithExitCode)
 
-import Distribution.Client.Buck2.Fingerprint (fingerprintOf)
+import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
+import Distribution.Client.Buck2.Fingerprint (ccFingerprintOf, fingerprintOf)
 
 main :: IO ()
 main = do
@@ -38,7 +40,7 @@ main = do
     exitFailure
 
 unitTests :: [(String, IO ())]
-unitTests = [("fingerprint", fingerprint)]
+unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest)]
 
 runUnitTest :: (String, IO ()) -> IO Bool
 runUnitTest (name, test) = do
@@ -54,6 +56,10 @@ tests =
   [ ("basic", basic)
   , ("disabled-stanzas", disabledStanzas)
   , ("missing-module", missingModule)
+  , ("cache-config", cacheConfig)
+  , ("source-deps", sourceDeps)
+  , ("custom-setup", customSetup)
+  , ("reexports", reexports)
   ]
 
 -- | A copy of a fixture project, and how to run @cabal-buck2@ in it.
@@ -79,6 +85,7 @@ runTest exe (name, test) = do
     -- The fixture is named after the test, except for tests that reuse one.
     fixture = case name of
       "disabled-stanzas" -> "basic"
+      "cache-config" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir
@@ -164,6 +171,51 @@ fingerprint = do
   -- Properties it doesn't use don't matter.
   assertEqual "unused property" fp (fingerprintOf (Map.insert "C compiler command" "gcc" props) confs)
 
+-- | The fingerprint of the C toolchain: GHC uses it to preprocess and link, and
+-- buck2 to compile and link C and C++.
+ccFingerprint :: IO ()
+ccFingerprint = do
+  let reports =
+        [ ("target", "x86_64-pc-linux-gnu")
+        , ("libc", "ldd (GNU libc) 2.39")
+        , ("libstdc++", "libstdc++.so.6.0.33")
+        , ("gcc", "gcc (GCC) 13.2.0")
+        , ("ld", "GNU ld 2.42")
+        ]
+      fp = ccFingerprintOf reports
+  assertContains "cc fingerprint" "x86_64-pc-linux-gnu-" fp
+  assertEqual "reordered" fp (ccFingerprintOf (reverse reports))
+  let changed name new = [(n, if n == name then new else v) | (n, v) <- reports]
+  assertDiffers "libc" fp (ccFingerprintOf (changed "libc" "ldd (GNU libc) 2.40"))
+  assertDiffers "libstdc++" fp (ccFingerprintOf (changed "libstdc++" "libstdc++.so.6.0.34"))
+  assertDiffers "compiler" fp (ccFingerprintOf (changed "gcc" "gcc (GCC) 14.1.0"))
+  assertDiffers "linker" fp (ccFingerprintOf (changed "ld" "GNU ld 2.43"))
+  assertDiffers "target" fp (ccFingerprintOf (changed "target" "aarch64-linux-gnu"))
+
+-- | Adding, changing and removing the block that @--cache@ puts in a config
+-- file, without touching anything else in it.
+spliceBlockTest :: IO ()
+spliceBlockTest = do
+  let user = "[cells]\n  root = .\n\n[build]\n  threads = 4\n"
+      add address = spliceBlock (Just (cacheBlock address))
+      once = add "grpc://a:1" user
+  -- The user's part is kept, and the block comes after it.
+  assertContains "added block" "[cells]\n  root = .\n\n[build]\n  threads = 4\n\n# >>> cabal buck2: cache" once
+  assertContains "added block" "action_cache_address = grpc://a:1" once
+  -- Doing it again changes nothing; a new address replaces the old one.
+  assertEqual "idempotent" once (add "grpc://a:1" once)
+  let changed = add "grpc://b:2" once
+  assertContains "changed address" "action_cache_address = grpc://b:2" changed
+  assertNotContains "changed address" "grpc://a:1" changed
+  -- Removing it gives back the original, and removing again is a no-op.
+  let removed = spliceBlock Nothing changed
+  assertEqual "removed" user removed
+  assertEqual "removed twice" user (spliceBlock Nothing removed)
+  -- A file without a trailing newline or blocks is left alone when there is nothing to remove.
+  assertEqual "nothing to remove" "[a]" (spliceBlock Nothing "[a]")
+  -- Text after the block is kept too.
+  assertContains "text after the block" "[later]" (add "grpc://c:3" (once ++ "[later]\n"))
+
 assertEqual :: String -> String -> String -> IO ()
 assertEqual what a b = unless (a == b) $ failure (what ++ ": " ++ show a ++ " /= " ++ show b)
 
@@ -184,6 +236,7 @@ basic project = do
   let toolsPath = "third-party" </> "haskell" </> "tools.bzl"
   tools <- readIn project toolsPath
   assertContains toolsPath "GHC_FINGERPRINT = \"" tools
+  assertContains toolsPath "CC_FINGERPRINT = \"" tools
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
   tools' <- readIn project toolsPath
   assertEqual "tools.bzl after a second run" tools tools'
@@ -279,6 +332,135 @@ basic project = do
   ab "out = 'cabal_macros.h'" autogenBuck
   ab "out = 'Main.hs'" autogenBuck
 
+-- | Make a repository of the packages in the project's @dep@ directory, which is
+-- the only one used, and a @cabal.project@ for the project's @app@ package.
+localRepository :: Project -> [String] -> IO ()
+localRepository project names = do
+  let dir = projectDir project
+  createDirectoryIfMissing True (dir </> "repo")
+  forM_ names $ \name ->
+    callProcess "tar" ["-C", dir </> "dep", "-czf", dir </> "repo" </> (name ++ ".tar.gz"), name]
+  writeFile (dir </> "cabal.project") $
+    unlines ["packages: app", "repository localrepo", "  url: file+noindex://" ++ dir </> "repo", "active-repositories: localrepo"]
+
+-- | @--source-deps@ unpacks the dependencies (here one package from a local
+-- repository) under @dist-newstyle/src@ and generates their targets like
+-- those of the project's own packages; without it they are left to the cabal
+-- store, and what an earlier run generated for them is removed.
+sourceDeps :: Project -> IO ()
+sourceDeps project = do
+  let dir = projectDir project
+  localRepository project ["dep-1.0"]
+
+  -- With the dependency already in the store, from a run without the flag.
+  _ <- buck2 project []
+  _ <- buck2 project ["--source-deps"]
+  let depBzlPath = "dist-newstyle" </> "src" </> "dep-1.0" </> "BUCK.cabal.bzl"
+  depBzl <- readIn project depBzlPath
+  assertContains depBzlPath "'name': 'dep'" depBzl
+  assertContains depBzlPath "'version': '1.0'" depBzl
+  assertContains depBzlPath "'dir': 'dist-newstyle/src/dep-1.0'" depBzl
+  -- Its data files are recorded, for the tools that read them.
+  assertContains depBzlPath "'data/*.txt'" depBzl
+  -- hsc2hs is told what it is compiling for.
+  assertContains depBzlPath "'-D__GLASGOW_HASKELL__=" depBzl
+  assertContains depBzlPath "'asm_sources'" depBzl
+  assertContains depBzlPath "'asm_options'" depBzl
+  assertContains depBzlPath "'cmm_sources'" depBzl
+  assertContains depBzlPath "'cmm/Dep.cmm'" depBzl
+  appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
+  -- A literate happy grammar is a module source.
+  assertContains "app/BUCK.cabal.bzl" "'Parser': 'Parser.ly'" appBzl
+  assertContains "app/BUCK.cabal.bzl" "'dir': 'dist-newstyle/src/dep-1.0'" appBzl
+
+  -- Without the flag the dependency is the store's again.
+  _ <- buck2 project []
+  removed <- not <$> doesDirectoryExist (dir </> "dist-newstyle" </> "src" </> "dep-1.0")
+  unless removed $ failure "dist-newstyle/src/dep-1.0 should have been removed"
+  appBzl' <- readIn project ("app" </> "BUCK.cabal.bzl")
+  assertNotContains "app/BUCK.cabal.bzl" "dist-newstyle/src/dep-1.0" appBzl'
+
+-- | @reexported-modules@: a module re-exported from another package (by name
+-- or found in a dependency, renamed or not) or from another library of the
+-- package is recorded in the spec with where it comes from, which is how the
+-- library claims it - so that a package that depends on the library, and not
+-- on where the module is from, can import it. A module that is renamed from
+-- the library itself is a module of its own that re-exports it.
+reexports :: Project -> IO ()
+reexports project = do
+  _ <- buck2 project []
+  reBzl <- readIn project ("re-lib" </> "BUCK.cabal.bzl")
+  let re = assertContains "re-lib/BUCK.cabal.bzl"
+  re "'reexports'" reBzl
+  re "'module': 'Orig.A',\n                    'original': 'Orig.A',\n                    'from': {\n                        'package': 'base-lib',\n                        'dir': 'base-lib'," reBzl
+  re "'module': 'New.B',\n                    'original': 'Orig.B'," reBzl
+  re "'module': 'Sub.M',\n                    'original': 'Sub.M',\n                    'from': {\n                        'package': 're-lib',\n                        'library': 'sub'," reBzl
+  assertNotContains "re-lib/BUCK.cabal.bzl" "'module': 'New.X'" reBzl
+  -- Not exported by another library: a module of its own.
+  re "'New.X': {\n                    'autogen'" reBzl
+  shim <- readIn project ("re-lib" </> "cabal-buck2" </> "autogen" </> "reexports" </> "re-lib" </> "New" </> "X.hs")
+  assertContains "the New.X module" "module New.X (module Own.X) where" shim
+
+  -- What depends on the library doesn't need to depend on where they are from.
+  userBzl <- readIn project ("user" </> "BUCK.cabal.bzl")
+  assertContains "user/BUCK.cabal.bzl" "'package': 're-lib'" userBzl
+  assertNotContains "user/BUCK.cabal.bzl" "base-lib" userBzl
+
+-- | A package with a @Custom@ build type needs its @Setup.hs@ to be run, which
+-- is not done: it, and what depends on it, can't be built.
+customSetup :: Project -> IO ()
+customSetup project = do
+  localRepository project ["custom-dep-0.1"]
+  (code, failed) <- runBuck2 project ["--source-deps"]
+  when (code == ExitSuccess) $ failure "a package with build-type: Custom was accepted"
+  assertContains "error" "custom-dep" failed
+  assertContains "error" "build-type: Custom" failed
+  assertContains "error" "--keep-going" failed
+
+  out <- buck2 project ["--source-deps", "--keep-going"]
+  assertContains "warning" "build-type: Custom" out
+  assertContains "warning" "skipping executable app" out
+  depBzl <- readIn project ("dist-newstyle" </> "src" </> "custom-dep-0.1" </> "BUCK.cabal.bzl")
+  assertNotContains "custom-dep BUCK.cabal.bzl" "'kind': 'library'" depBzl
+
+-- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
+-- kept by later runs without the flag, and @--no-cache@ removes.
+cacheConfig :: Project -> IO ()
+cacheConfig project = do
+  let buckconfig = ".buckconfig"
+      block = "# >>> cabal buck2: cache"
+  before <- readIn project buckconfig
+  assertNotContains buckconfig block before
+
+  out <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  -- A running buck2 daemon would keep the old settings.
+  assertContains "notice" "buck2 kill" out
+  withCache <- readIn project buckconfig
+  assertContains buckconfig "[cabal_buck2]\n  cache = true" withCache
+  assertContains buckconfig "default_allow_cache_upload = true" withCache
+  assertContains buckconfig "action_cache_address = grpc://127.0.0.1:9092" withCache
+  assertContains buckconfig "tls = false" withCache
+  -- What was there is kept.
+  assertContains buckconfig (take 40 before) withCache
+
+  -- Later runs leave it alone.
+  _ <- buck2 project []
+  again <- readIn project buckconfig
+  assertEqual "after a run without --cache" withCache again
+
+  -- Removing it restores the original file.
+  _ <- buck2 project ["--no-cache"]
+  without <- readIn project buckconfig
+  assertEqual "after --no-cache" before without
+
+  -- Mistakes are reported.
+  (badCode, badOut) <- runBuck2 project ["--cache=http://example.org"]
+  when (badCode == ExitSuccess) $ failure "--cache=http://... was accepted"
+  assertContains "bad address" "grpc://" badOut
+  (code', out') <- runBuck2 project ["--cache=grpc://a:1", "--no-cache"]
+  when (code' == ExitSuccess) $ failure "--cache with --no-cache was accepted"
+  assertContains "both flags" "can't be used together" out'
+
 -- | A plain run, without @--enable-tests@ or @--enable-benchmarks@, must
 -- succeed even though the package has test-suites and a benchmark. The
 -- benchmark depends on @stm@, which nothing else in the fixture uses: since
@@ -300,10 +482,19 @@ disabledStanzas project = do
 -- | A component whose sources can't all be found is skipped with a warning
 -- saying why (a rule that names a missing file would take down the whole
 -- buck2 build), and so is every component of the same package that depends
--- on it. Everything else is still generated.
+-- on it. By default that is an error and nothing is generated; with
+-- @--keep-going@ everything else is generated.
 missingModule :: Project -> IO ()
 missingModule project = do
-  out <- buck2 project []
+  (code, failed) <- runBuck2 project []
+  when (code == ExitSuccess) $ failure "a component that can't be built was accepted"
+  assertContains "error" "for module Absent" failed
+  assertContains "error" "skipping library broken-pkg" failed
+  assertContains "error" "--keep-going" failed
+  generated <- doesFileExist (projectDir project </> "broken-pkg" </> "BUCK.cabal.bzl")
+  when generated $ failure "files were generated despite the error"
+
+  out <- buck2 project ["--keep-going"]
   assertContains "output" "for module Absent" out
   assertContains "output" "skipping library broken-pkg" out
   assertContains "output" "skipping executable uses-lib" out

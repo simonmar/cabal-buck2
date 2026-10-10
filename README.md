@@ -19,9 +19,13 @@ cabal install cabal-buck2
 Then in the root of your project or package:
 
 ```
-git clone https://github.com/simonmar/haskell-buck2.git buck2
+git clone https://github.com/simonmar/haskell-buck2.git buck2 -b <version>
 cabal buck2 --enable-tests
 ```
+
+Where `<version>` is the version of `cabal-buck`,
+e.g. `0.2.0.0`. Checking out the branch ensures that you get a
+compatible copy of the Buck2 support code.
 
 Then you can use `buck2` as the build tool, e.g.
 
@@ -72,7 +76,7 @@ done that you can switch to `buck2` for building. The idea is that
   * Buck2 understands dependencies between C/C++ source files and header files (Cabal doesn't: [issue #4306](https://github.com/haskell/cabal/issues/4306)), so when you modify a C/C++ header the correct things are rebuilt.
   * Buck2 builds C/C++ files in parallel, while Cabal doesn't ([issue #7127](https://github.com/haskell/cabal/issues/7127))
 
-* You can use [remote execution and caching](https://buck2.build/docs/users/remote_execution/) (I haven't tried this with `cabal buck2` yet).
+* You can use [remote execution and caching](https://buck2.build/docs/users/remote_execution/). There is built-in support for using a build cache, see [Sharing build results (a build cache)](#sharing-build-results-a-build-cache) below.
 
 Finally, if you have an existing codebase using Buck2 then this is the
 basis of something that could "buckify" Cabal packages to integrate
@@ -84,7 +88,7 @@ dependencies from the build system itself.
 
 # How complete is it?
 
-I've used it to build a few largish projects, in particular the Cabal
+I've used it to build a few large projects, in particular the Cabal
 project itself which consists of about 16 packages and a few hundred
 source files. It can also build [Glean](https://glean.software), which
 has some complex build requirements including custom codegen, FFI &
@@ -112,8 +116,13 @@ does the following:
 
    * `third-party/haskell`: tells Buck2 about all the prebuilt package
      dependencies, either in the Cabal store or in GHC's package
-     DB. In here we also record the GHC version you're using, and the
+     DB (unless you build the dependencies from source, see below). In here we also record the GHC version you're using, and the
      paths to any tool dependencies.
+
+A component that can't be built with buck2 (e.g. `build-type: Custom`)
+is an error: `cabal buck2` lists them and aborts, unless you give the
+`--keep-going` flag in which case it will translate everything it
+can and warn about the missing components.
 
 # Buck2 quick start
 
@@ -208,6 +217,84 @@ buck2 build my-package:my-program -m opt
 
 There are other build options that can be selected in a similar way, such as `-m prof` to enable profiling. See `constraints/BUCK` for details.
 
+# Sharing build results (a build cache)
+
+By default buck2 keeps nothing between runs of its daemon, nor between
+checkouts: after `buck2 kill`, or in a new worktree, everything is built again.
+A cache of build results fixes that. Buck2 can use any server that implements
+the Bazel remote execution API's action cache and CAS, **only to look results
+up and store them: nothing is run remotely**. For example
+[bazel-remote](https://github.com/buchgr/bazel-remote):
+
+```
+bazel-remote --dir ~/.cache/buck2 --max_size 20 --grpc_address 127.0.0.1:9092 --http_address 127.0.0.1:8080
+cabal buck2 --cache=grpc://127.0.0.1:9092
+```
+
+`--cache` adds a block to `.buckconfig` (between `# >>> cabal buck2: cache`
+and `# <<< cabal buck2: cache <<<`; anything else in the file is left alone),
+which later runs keep. `cabal buck2 --no-cache` removes it. **Run
+`buck2 kill` after changing it**: buck2 reads the cache's address when its
+daemon starts, and a daemon that was already running keeps the old settings.
+
+Things to know:
+
+* **The server has to be running.** When it isn't, buck2 retries connecting
+  for about 45 seconds on each build before carrying on without the cache.
+  Re-run `cabal buck2` with `--no-cache` to stop using the cache.
+* The key of a cached result includes the command line, the environment and
+  the contents of the inputs. It includes the exact packages from the Cabal
+  store (their unit ids), a fingerprint of the GHC installation (its version,
+  platform, source commit and the interface hashes of its boot packages) and
+  a fingerprint of the C toolchain (the versions of the C compiler, `ld`, the
+  C library and `libstdc++`). It does **not** include other files that are
+  found on the system, such as headers and libraries that are not part of
+  those. That is fine on one machine; **sharing a cache between machines with
+  different system software is not safe yet**.
+* Compiling and linking C/C++ code is cached, `pkg-config` queries are not.
+* **buck2 only downloads what is needed.** A result that is found in the cache
+  is not downloaded until something needs its files: a local action that has
+  it as an input, `buck2 run` or `buck2 test`, or it is what you asked to
+  build. So most intermediate results (the compiled modules of a library
+  that was cached as a whole, say) are never fetched. `buck2 build -M none
+  //...` goes further and does not download what you asked for either, which
+  is a fast way to find out whether everything is already in the cache: the
+  summary line shows how many actions were cache hits.
+
+# Building the dependencies with buck2
+
+By default the dependencies of your packages are built by `cabal`, into its
+store, and Buck2 uses them from there. With `--source-deps` Buck2 builds them
+too:
+
+```
+cabal buck2 --source-deps
+```
+
+The source of each dependency is unpacked under `dist-newstyle/src` and the
+package gets a `BUCK` and `BUCK.cabal.bzl` like those of your own packages.
+Only the packages that come with GHC are used from its package database; the
+build then doesn't depend on the Cabal store at all. Together with a
+[build cache](#sharing-build-results-a-build-cache) that means a dependency is
+built once, and then found in the cache by every other checkout, which is the
+job the store does for `cabal`.
+
+Things to know:
+
+* If any dependency package isn't supported by `cabal buck2`,
+  `--source-deps` will fail. The most common cause of this is a
+  package that uses `build-type: Custom` (see
+  [Custom build type](#custom-build-type)). In case of failure you can
+  either fall back to not using `--source-deps` or use `--keep-going`
+  to continue without the unsupported dependencies.
+* Running `cabal buck2` again without `--source-deps` goes back to the store,
+  and removes the packages that were unpacked for the previous run.
+* The tools that dependencies need to preprocess sources (`alex` and `happy`)
+  are built by buck2 too, when the project needs them.
+* The build plan can only have one version of each package, because a package
+  in a `.cabal` file is referred to by its name. `cabal buck2` stops and lists
+  the packages that need more than one.
+
 # Performance
 
 I ran some experiments building the Cabal project itself - 16 packages
@@ -285,9 +372,21 @@ integration](https://github.com/tweag/buck2-haskell).
 
 ## Custom build type
 
-The `cabal buck2` command doesn't run the actual `Setup.hs` code for a
-package with the (legacy) Custom build type. If you rely on this, use
-Hooks instead.
+Build-type `Custom` isn't supported, and can't be in general, so
+`cabal buck2` will fail if any package requires it. Note that this
+also applies to dependencies when `--source-deps` is being used.  As
+with other unsupported features, you can use `--keep-going` to just
+skip all the affected packages.
+
+## Hooks build type
+
+There is partial support for `build-type: Hooks`: only configure hooks
+are supported so far; files generated by pre-build rules are not.
+
+The `SetupHooks` executable is built (by cabal) during `cabal buck2`,
+including the package's `setup-depends`. It has to be built with the
+same Cabal version as `cabal-buck2`, so `cabal-buck2` injects a
+solver constraint to ensure that.
 
 ## **Template Haskell and `prof`**
 

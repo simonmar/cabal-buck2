@@ -43,7 +43,13 @@ import Distribution.Client.NixStyleOptions
   , defaultNixStyleFlags
   , nixStyleOptions
   )
+import Distribution.Client.ProjectConfig (ProjectConfig (..), ProjectConfigShared (..))
 import Distribution.Client.ProjectOrchestration
+import Distribution.Client.Targets (UserConstraint (..), UserConstraintScope (..))
+import Distribution.Solver.Types.ConstraintSource (ConstraintSource (ConstraintSourceUnknown))
+import Distribution.Solver.Types.PackageConstraint (PackageProperty (PackagePropertyVersion))
+import Distribution.Types.PackageName (mkPackageName)
+import Distribution.Version (alterVersion, earlierVersion, intersectVersionRanges, orLaterVersion)
 import Distribution.Client.ScriptUtils
   ( AcceptNoTargets (..)
   , TargetContext (..)
@@ -52,19 +58,24 @@ import Distribution.Client.ScriptUtils
   )
 import Distribution.Client.Setup
   ( GlobalFlags
-  , InstallFlags (installOnlyDeps)
+  , InstallFlags (installKeepGoing, installOnlyDeps)
   )
 
 import Distribution.Simple.Command (CommandUI (..), usageAlternatives)
-import Distribution.Simple.Flag (toFlag)
+import Distribution.Simple.Flag (fromFlagOrDefault, toFlag)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
-import Distribution.Simple.Utils (die', notice)
+import Distribution.Simple.Utils (cabalVersion, die', notice)
 import Distribution.Verbosity (normal)
 
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
+import Distribution.Client.Buck2.Cache (cacheSetting, configureCache)
 import Distribution.Client.Buck2.Configure (configureComponents)
+import Distribution.Client.Buck2.Flags (Buck2Flags, buck2FlagOptions, defaultBuck2Flags, dependencyMode)
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
+  , localBuildTools
+  , prebuiltUnits
+  , localToolTargets
   , projectTestOptions
   , wantedBuildTools
   )
@@ -76,7 +87,7 @@ import Distribution.Client.Buck2.Setup
 import Distribution.Client.Buck2.Write (writeAllPackages)
 
 -- | The @cabal buck2@ CLI command
-buck2Command :: CommandUI (NixStyleFlags ())
+buck2Command :: CommandUI (NixStyleFlags Buck2Flags)
 buck2Command =
   CommandUI
     { commandName = "buck2"
@@ -92,21 +103,40 @@ buck2Command =
           ++ "buck2/README.md for details.\n\n"
           ++ "Flags that would normally be passed to `cabal build`/`cabal "
           ++ "configure` (-f, --enable-profiling, --enable-tests, etc.) are "
-          ++ "honoured here too, and apply to the dependency build."
+          ++ "honoured here too, and apply to the dependency build.\n\n"
+          ++ "A component that can't be built with buck2 is an error, unless "
+          ++ "--keep-going is given: then it is skipped with a warning."
     , commandNotes = Nothing
-    , commandDefaultFlags = defaultNixStyleFlags ()
-    , commandOptions = nixStyleOptions (const [])
+    , commandDefaultFlags = defaultNixStyleFlags defaultBuck2Flags
+    , commandOptions = nixStyleOptions buck2FlagOptions
     }
 
+-- | The hooks of a package with a @Hooks@ build type are run by this program,
+-- through a hooks executable that has to be built with the same release of
+-- Cabal. So that a package can allow older releases (to be usable with older
+-- versions of cabal) it is solved for with this one.
+withHooksConstraint :: ProjectBaseContext -> ProjectBaseContext
+withHooksConstraint ctx =
+  ctx{projectConfig = projectConfig ctx <> mempty{projectConfigShared = mempty{projectConfigConstraints = [constraint]}}}
+  where
+    constraint =
+      ( UserConstraint
+          (UserAnySetupQualifier (mkPackageName "Cabal-hooks"))
+          (PackagePropertyVersion (intersectVersionRanges (orLaterVersion release) (earlierVersion (alterVersion (\v -> take 1 v ++ [v !! 1 + 1]) release))))
+      , ConstraintSourceUnknown
+      )
+    release = alterVersion (take 2) cabalVersion
+
 -- | Implement @cabal buck2@
-buck2Action :: NixStyleFlags () -> [String] -> GlobalFlags -> IO ()
+buck2Action :: NixStyleFlags Buck2Flags -> [String] -> GlobalFlags -> IO ()
 buck2Action flags extraArgs globalFlags = do
   unless (null extraArgs) $
     die' verbosity ("'cabal buck2' doesn't take any extra arguments: " ++ unwords extraArgs)
+  cache <- either (die' verbosity) return (cacheSetting (extraFlags flags))
 
   withContextAndSelectors verbosity RejectNoTargets Nothing depsFlags ["all"] globalFlags BuildCommand $
     \targetCtx ctx targetSelectors -> do
-      baseCtx <- case targetCtx of
+      baseCtx <- withHooksConstraint <$> case targetCtx of
         ProjectContext -> return ctx
         GlobalContext -> return ctx
         ScriptContext path exemeta -> updateContextAndWriteProjectFile ctx path exemeta
@@ -114,11 +144,12 @@ buck2Action flags extraArgs globalFlags = do
       let projectRoot = distProjectRootDirectory (distDirLayout baseCtx)
       checkBuck2Prelude verbosity projectRoot
 
-      buildCtx <- buildDependencies verbosity baseCtx targetSelectors
+      buildCtx <- buildDependencies verbosity mode baseCtx targetSelectors
 
       ensureBuckconfigAndPackage verbosity projectRoot
+      configureCache verbosity projectRoot cache
 
-      localPkgs <- builtLocalPackages verbosity (distDirLayout baseCtx) (elaboratedPlanOriginal buildCtx)
+      localPkgs <- builtLocalPackages verbosity mode (distDirLayout baseCtx) (elaboratedPlanOriginal buildCtx)
 
       (externalBuildTools, resolvedDeps) <-
         generatePrebuilt
@@ -127,19 +158,23 @@ buck2Action flags extraArgs globalFlags = do
           (cabalDirLayout baseCtx)
           (elaboratedShared buildCtx)
           (elaboratedPlanToExecute buildCtx)
+          (prebuiltUnits mode (elaboratedPlanOriginal buildCtx))
+          (localToolTargets projectRoot localPkgs)
+          (localBuildTools projectRoot localPkgs)
           (wantedBuildTools localPkgs)
 
       -- 'generatePrebuilt' already found and parsed every real @.conf@
       -- file of the resolved dependency closure.
-      componentLBIs <- configureComponents verbosity baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
+      componentLBIs <- configureComponents verbosity mode baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
 
       writeAllPackages
         verbosity
         projectRoot
         componentLBIs
         externalBuildTools
-        (projectTestOptions (elaboratedPlanOriginal buildCtx))
+        (projectTestOptions mode (elaboratedPlanOriginal buildCtx))
         localPkgs
+        (fromFlagOrDefault False (installKeepGoing (installFlags flags)))
 
       notice verbosity $
         unlines
@@ -150,4 +185,5 @@ buck2Action flags extraArgs globalFlags = do
           ]
   where
     verbosity = cfgVerbosity normal flags
+    mode = dependencyMode (extraFlags flags)
     depsFlags = flags{installFlags = (installFlags flags){installOnlyDeps = toFlag True}}

@@ -1,0 +1,26 @@
+cabal-version:    3.0
+name:             re-lib
+version:          0.1
+build-type:       Simple
+
+library sub
+  visibility:       private
+  exposed-modules:  Sub.M
+  hs-source-dirs:   sub
+  build-depends:    base
+  default-language: Haskell2010
+
+library
+  exposed-modules:   Own.X
+  reexported-modules:
+    -- named by its package
+    base-lib:Orig.A,
+    -- renamed, and found in a dependency
+    Orig.B as New.B,
+    -- of another library of the package
+    Sub.M,
+    -- renamed, of the library itself
+    Own.X as New.X
+  hs-source-dirs:    src
+  build-depends:     base, base-lib, re-lib:sub
+  default-language:  Haskell2010

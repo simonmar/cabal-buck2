@@ -1,6 +1,6 @@
 cabal-version:      3.8
 name:               cabal-buck2
-version:            0.1.0.0
+version:            0.2.0.0
 synopsis:           Build a Cabal project with buck2 (the `cabal buck2` external command)
 license:            BSD-3-Clause
 build-type:         Simple
@@ -17,6 +17,10 @@ tested-with:        GHC==9.14.1, GHC==9.12.4, GHC==9.10.3, GHC==9.8.2, GHC==9.6.
 extra-doc-files:    README.md, changelog.md
 extra-source-files:
   test/fixtures/**/*.c
+  test/fixtures/**/*.cmm
+  test/fixtures/**/*.S
+  test/fixtures/**/*.js
+  test/fixtures/**/*.ly
   test/fixtures/**/*.cabal
   test/fixtures/**/*.h
   test/fixtures/**/*.hs
@@ -24,6 +28,7 @@ extra-source-files:
   test/fixtures/**/.buckconfig
   test/fixtures/**/.gitkeep
   test/fixtures/**/PACKAGE
+  test/fixtures/**/*.txt
 
 homepage:            https://github.com/simonmar/cabal-buck2
 bug-reports:         https://github.com/simonmar/cabal-buck2/issues
@@ -43,8 +48,10 @@ library
   exposed-modules:
     Distribution.Client.CmdBuck2
     Distribution.Client.Buck2.BuildDependencies
+    Distribution.Client.Buck2.Cache
     Distribution.Client.Buck2.Configure
     Distribution.Client.Buck2.Fingerprint
+    Distribution.Client.Buck2.Flags
     Distribution.Client.Buck2.Generate
     Distribution.Client.Buck2.LocalPackages
     Distribution.Client.Buck2.Prebuilt
@@ -61,14 +68,17 @@ library
     , Cabal         ==3.18.*
     , Cabal-syntax  ==3.18.*
     , cabal-install ==3.18.1.0
+    , cabal-install-solver ==3.18.*
     , containers    >=0.6.7 && <0.7
     , directory     >=1.3.8 && <1.4
     , filepath      ==1.4.*
+    , process       >=1.6 && <1.7
     , stm           >=2.5.1 && <2.6
 
 executable cabal-buck2
   import:           warnings
   main-is:          Main.hs
+  ghc-options:      -threaded -rtsopts
   hs-source-dirs:   app
   default-language: GHC2021
   build-depends:
@@ -80,8 +90,8 @@ executable cabal-buck2
 -- `cabal test` runs `cabal-buck2` on the projects in `test/fixtures`
 -- and checks the files it generates. The tests don't need buck2, and
 -- use a private `CABAL_DIR` and the packages installed with GHC only
--- (the fixtures set `active-repositories: :none`), so they need no
--- network access.
+-- (the fixtures set `active-repositories: :none`, or a local repository
+-- made with `tar`), so they need no network access.
 
 test-suite fixtures
   import:             warnings
