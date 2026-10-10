@@ -24,7 +24,7 @@ cabal buck2 --enable-tests
 ```
 
 Where `<version>` is the version of `cabal-buck`,
-e.g. `0.1.0.0`. Checking out the branch ensures that you get a
+e.g. `0.2.0.0`. Checking out the branch ensures that you get a
 compatible copy of the Buck2 support code.
 
 Then you can use `buck2` as the build tool, e.g.
@@ -76,7 +76,7 @@ done that you can switch to `buck2` for building. The idea is that
   * Buck2 understands dependencies between C/C++ source files and header files (Cabal doesn't: [issue #4306](https://github.com/haskell/cabal/issues/4306)), so when you modify a C/C++ header the correct things are rebuilt.
   * Buck2 builds C/C++ files in parallel, while Cabal doesn't ([issue #7127](https://github.com/haskell/cabal/issues/7127))
 
-* You can use [remote execution and caching](https://buck2.build/docs/users/remote_execution/) (I haven't tried this with `cabal buck2` yet).
+* You can use [remote execution and caching](https://buck2.build/docs/users/remote_execution/). There is built-in support for using a build cache, see [Sharing build results (a build cache)](#sharing-build-results-a-build-cache) below.
 
 Finally, if you have an existing codebase using Buck2 then this is the
 basis of something that could "buckify" Cabal packages to integrate
@@ -88,7 +88,7 @@ dependencies from the build system itself.
 
 # How complete is it?
 
-I've used it to build a few largish projects, in particular the Cabal
+I've used it to build a few large projects, in particular the Cabal
 project itself which consists of about 16 packages and a few hundred
 source files. It can also build [Glean](https://glean.software), which
 has some complex build requirements including custom codegen, FFI &
@@ -119,10 +119,10 @@ does the following:
      DB (unless you build the dependencies from source, see below). In here we also record the GHC version you're using, and the
      paths to any tool dependencies.
 
-A component that can't be built with buck2 (a module that can't be found,
-`asm-sources`, a dependency that is itself such a component, ...) is an error:
-`cabal buck2` lists them and generates nothing. With `--keep-going`, as in
-`cabal build`, it warns about them, generates everything else and carries on.
+A component that can't be built with buck2 (e.g. `build-type: Custom`)
+is an error: `cabal buck2` lists them and aborts, unless you give the
+`--keep-going` flag in which case it will translate everything it
+can and warn about the missing components.
 
 # Buck2 quick start
 
@@ -221,7 +221,7 @@ There are other build options that can be selected in a similar way, such as `-m
 
 By default buck2 keeps nothing between runs of its daemon, nor between
 checkouts: after `buck2 kill`, or in a new worktree, everything is built again.
-A cache of build results fixes that. buck2 can use any server that implements
+A cache of build results fixes that. Buck2 can use any server that implements
 the Bazel remote execution API's action cache and CAS, **only to look results
 up and store them: nothing is run remotely**. For example
 [bazel-remote](https://github.com/buchgr/bazel-remote):
@@ -236,14 +236,12 @@ and `# <<< cabal buck2: cache <<<`; anything else in the file is left alone),
 which later runs keep. `cabal buck2 --no-cache` removes it. **Run
 `buck2 kill` after changing it**: buck2 reads the cache's address when its
 daemon starts, and a daemon that was already running keeps the old settings.
-In a test with
-`persistent`, a build in a fresh directory went from 33 s to about 1 s.
 
 Things to know:
 
 * **The server has to be running.** When it isn't, buck2 retries connecting
   for about 45 seconds on each build before carrying on without the cache.
-  Use `--no-cache` if you stop using it.
+  Re-run `cabal buck2` with `--no-cache` to stop using the cache.
 * The key of a cached result includes the command line, the environment and
   the contents of the inputs. It includes the exact packages from the Cabal
   store (their unit ids), a fingerprint of the GHC installation (its version,
@@ -251,8 +249,8 @@ Things to know:
   a fingerprint of the C toolchain (the versions of the C compiler, `ld`, the
   C library and `libstdc++`). It does **not** include other files that are
   found on the system, such as headers and libraries that are not part of
-  those. That is fine on one machine; sharing a cache between machines with
-  different system software is not safe yet.
+  those. That is fine on one machine; **sharing a cache between machines with
+  different system software is not safe yet**.
 * Compiling and linking C/C++ code is cached, `pkg-config` queries are not.
 * **buck2 only downloads what is needed.** A result that is found in the cache
   is not downloaded until something needs its files: a local action that has
@@ -266,7 +264,7 @@ Things to know:
 # Building the dependencies with buck2
 
 By default the dependencies of your packages are built by `cabal`, into its
-store, and buck2 uses them from there. With `--source-deps` buck2 builds them
+store, and Buck2 uses them from there. With `--source-deps` Buck2 builds them
 too:
 
 ```
@@ -283,16 +281,16 @@ job the store does for `cabal`.
 
 Things to know:
 
+* If any dependency package isn't supported by `cabal buck2`,
+  `--source-deps` will fail. The most common cause of this is a
+  package that uses `build-type: Custom` (see
+  [Custom build type](#custom-build-type)). In case of failure you can
+  either fall back to not using `--source-deps` or use `--keep-going`
+  to continue without the unsupported dependencies.
 * Running `cabal buck2` again without `--source-deps` goes back to the store,
   and removes the packages that were unpacked for the previous run.
 * The tools that dependencies need to preprocess sources (`alex` and `happy`)
   are built by buck2 too, when the project needs them.
-* Components that use `js-sources` are not supported. They
-  are skipped with a warning, and so are the components that depend on them.
-* A package with a `configure` script is configured in its build directory
-  by `cabal buck2`, and the headers it generates are part of the build. Other
-  packages with a `Custom` build type can't be built (see
-  [Custom build type](#custom-build-type)).
 * The build plan can only have one version of each package, because a package
   in a `.cabal` file is referred to by its name. `cabal buck2` stops and lists
   the packages that need more than one.
@@ -379,9 +377,6 @@ Build-type `Custom` isn't supported, and can't be in general, so
 also applies to dependencies when `--source-deps` is being used.  As
 with other unsupported features, you can use `--keep-going` to just
 skip all the affected packages.
-
-One notable package currently ruled out by this is `ghc-paths`, until it
-uses the Hooks build type instead.
 
 ## Hooks build type
 
