@@ -10,6 +10,7 @@ module Distribution.Client.Buck2.Spec
   , SpecComponent (..)
   , Src (..)
   , SpecDep (..)
+  , SpecReexport (..)
   , SpecBuildTool (..)
   ) where
 
@@ -69,6 +70,9 @@ data SpecComponent = SpecComponent
   , scExtensions :: [String]
   , scExtraLibraries :: [String]
   , scDeps :: [SpecDep]
+  , scReexports :: [SpecReexport]
+  -- ^ Modules a library re-exports from the library of another package (or
+  -- another library of its own).
   , scBuildTools :: [SpecBuildTool]
   , scCSources :: [FilePath]
   , scCcOptions :: [String]
@@ -102,6 +106,14 @@ data SpecDep = SpecDep
   , depDir :: Maybe FilePath
   -- ^ The package's directory (relative to the cell root) if it's built by
   -- this project.
+  }
+
+-- | A module that a library re-exports (@reexported-modules@) from a library
+-- it depends on.
+data SpecReexport = SpecReexport
+  { reModule :: String
+  , reOriginal :: String
+  , reFrom :: SpecDep
   }
 
 -- | An executable that a component's @build-tool-depends@ needs on @PATH@.

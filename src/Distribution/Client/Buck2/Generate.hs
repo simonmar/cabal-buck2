@@ -44,6 +44,8 @@ import Distribution.PackageDescription
   , Executable (exeName, modulePath)
   , Library (exposedModules, libBuildInfo, libName, reexportedModules)
   , LibraryName (..)
+  , library
+  , subLibraries
   , PackageDescription
   , TestSuite (testInterface, testName)
   , TestSuiteInterface (..)
@@ -73,15 +75,18 @@ import Distribution.PackageDescription
   , targetBuildDepends
   )
 import Distribution.Simple.Compiler (compilerInfo)
+import qualified Distribution.InstalledPackageInfo as IPI
+import qualified Distribution.Simple.PackageIndex as PackageIndex
+import Distribution.Types.ExposedModule (ExposedModule (..))
 import Distribution.Types.Component (Component (..), componentBuildInfo, componentName)
-import Distribution.Types.ComponentLocalBuildInfo (ComponentLocalBuildInfo)
+import Distribution.Types.ComponentLocalBuildInfo (ComponentLocalBuildInfo (componentPackageDeps))
 import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.Dependency (depLibraries, depPkgName)
 import Distribution.Types.ExeDependency (ExeDependency (..))
 import Distribution.Simple.LocalBuildInfo (buildDir)
 import Distribution.Types.BuildType (BuildType (Custom, Configure))
 import Distribution.Types.ModuleReexport (ModuleReexport (..))
-import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform, localPkgDescr, withPrograms), componentNameCLBIs, localUnitId)
+import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform, installedPkgs, localPkgDescr, withPrograms), componentNameCLBIs, localUnitId)
 import Distribution.Types.PackageName (PackageName, unPackageName)
 import Distribution.Types.PkgconfigDependency (PkgconfigDependency (..))
 import Distribution.Types.PkgconfigName (unPkgconfigName)
@@ -113,14 +118,12 @@ import Distribution.Client.Buck2.Spec
 -- | Maps every local project package's name to the buck2 cell-relative
 -- directory its @BUCK@ file lives in (@.@ for one at the project root), so
 -- a dependency on another local package can be turned into a fully
--- qualified target label - plus, for each of its libraries, the other
--- libraries its @reexported-modules@ re-export from (see 'libraryDeps').
+-- qualified target label.
 type LocalPackageIndex = Map PackageName LocalPackage
 
 data LocalPackage = LocalPackage
   { lpDir :: FilePath
   , lpDescription :: PackageDescription
-  , lpReexports :: Map LibraryName [(PackageName, LibraryName)]
   }
 
 -- | A generated file that lives in the package's @cabal-buck2\/autogen@
@@ -313,7 +316,8 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
       Just (lbi, clbi) -> case resolveModules sources pkgDesc (Just (lbi, clbi)) bi (exposedModules lib ++ otherModules bi) of
         Left problems -> skipBecause problems ("library " ++ targetName ++ " (couldn't resolve all its modules)")
         Right (srcs, srcAutogen) ->
-          let shims = reexportShims targetName pkgDesc lib
+          let origins = reexportOrigins localIndex pkgDesc lbi clbi lib
+              shims = reexportShims targetName [r | (r, Nothing) <- origins]
               -- A library with no modules (a compatibility package, say) has
               -- nothing to build, which a rule can't have.
               extra
@@ -322,7 +326,9 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
            in componentTargets
                 (specComponent localIndex externalBuildTools Library targetName bi)
                   { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
-                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi, scHscOptions = platformDefines lbi
+                  , scReexports = [SpecReexport (prettyShow (moduleReexportName r)) (prettyShow (moduleReexportOriginalName r)) (specDep localIndex o) | (r, Just o) <- origins]
+                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi
+                  , scHscOptions = platformDefines lbi
                   }
                 (macrosHeader targetName pkgDesc lbi clbi : srcAutogen ++ map snd extra)
       where
@@ -439,10 +445,9 @@ emptyModule targetName =
 
 -- | A module that a library re-exports under another name
 -- (@reexported-modules: A as B@, with @A@ one of its own modules) as a module
--- of its own that does that: a package built by buck2 can't have the
--- re-export in its package db entry.
-reexportShims :: String -> PackageDescription -> Library -> [(ModuleName.ModuleName, AutogenFile)]
-reexportShims targetName pkgDesc lib =
+-- of its own that does that.
+reexportShims :: String -> [ModuleReexport] -> [(ModuleName.ModuleName, AutogenFile)]
+reexportShims targetName reexports =
   [ ( new
     , AutogenFile
         { autogenName = targetName ++ "-reexport-" ++ prettyShow new
@@ -456,9 +461,8 @@ reexportShims targetName pkgDesc lib =
               ]
         }
     )
-  | ModuleReexport{moduleReexportOriginalPackage = origin, moduleReexportOriginalName = old, moduleReexportName = new} <- reexportedModules lib
+  | ModuleReexport{moduleReexportOriginalName = old, moduleReexportName = new} <- reexports
   , new /= old
-  , maybe True (== packageName pkgDesc) origin
   ]
 
 -- | Where a @configure@ script (for a package with the @Configure@ build type)
@@ -504,7 +508,8 @@ specComponent localIndex externalBuildTools kind name bi =
       scLanguage = Just (prettyShow (fromMaybe Haskell98 (defaultLanguage bi)))
     , scExtensions = map prettyShow (usedExtensions bi)
     , scExtraLibraries = extraLibs bi
-    , scDeps = map depSpec (libraryDeps localIndex bi)
+    , scDeps = map (specDep localIndex) (libraryDeps bi)
+    , scReexports = []
     , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
@@ -519,14 +524,6 @@ specComponent localIndex externalBuildTools kind name bi =
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
     }
   where
-    depSpec (pn, ln) =
-      SpecDep
-        { depPackage = unPackageName pn
-        , depLibrary = case ln of
-            LSubLibName n -> Just (unUnqualComponentName n)
-            LMainLibName -> Nothing
-        , depDir = lpDir <$> Map.lookup pn localIndex
-        }
     -- A tool that's neither built by this project nor resolved to a real
     -- external binary can't be put on PATH by buck2: dropped, silently -
     -- most build-tool-depends are Setup.hs-time tools nothing needs on PATH.
@@ -601,35 +598,61 @@ libTargetName :: PackageName -> LibraryName -> String
 libTargetName pn LMainLibName = unPackageName pn
 libTargetName _ (LSubLibName n) = unUnqualComponentName n
 
--- | Every library a component depends on: its @build-depends@ (each of which may name
--- more than one library of a package via @pkg:sublib@ - see
--- 'depLibraries'), closed over the reexports of local packages.
-libraryDeps :: LocalPackageIndex -> BuildInfo -> [(PackageName, LibraryName)]
-libraryDeps localIndex bi = closeOverReexports [] directDeps
+-- | Every library a component depends on: its @build-depends@, each of which
+-- may name more than one library of a package via @pkg:sublib@ - see
+-- 'depLibraries'.
+libraryDeps :: BuildInfo -> [(PackageName, LibraryName)]
+libraryDeps bi =
+  ordNub
+    [ (depPkgName d, ln)
+    | d <- targetBuildDepends bi
+    , ln <- NES.toList (depLibraries d)
+    ]
+
+-- | The library, or the package's main one, that a dependency names.
+specDep :: LocalPackageIndex -> (PackageName, LibraryName) -> SpecDep
+specDep localIndex (pn, ln) =
+  SpecDep
+    { depPackage = unPackageName pn
+    , depLibrary = case ln of
+        LSubLibName n -> Just (unUnqualComponentName n)
+        LMainLibName -> Nothing
+    , depDir = lpDir <$> Map.lookup pn localIndex
+    }
+
+-- | Where a library's @reexported-modules@ come from: the library of another
+-- package, or another library of its own package, that it depends on - for a
+-- module named without its package, as Cabal resolves it, the first
+-- dependency that has the module. Those that come from the library itself
+-- are 'Nothing'.
+reexportOrigins :: LocalPackageIndex -> PackageDescription -> LocalBuildInfo -> ComponentLocalBuildInfo -> Library -> [(ModuleReexport, Maybe (PackageName, LibraryName))]
+reexportOrigins localIndex pkgDesc lbi clbi lib =
+  [ (r, origin)
+  | r <- reexportedModules lib
+  , let origin = case moduleReexportOriginalPackage r of
+          Just pn
+            | pn == packageName pkgDesc -> Nothing
+            | otherwise -> Just (pn, LMainLibName)
+          Nothing -> find (/= self) (providers (moduleReexportOriginalName r))
+  ]
   where
-    directDeps =
-      ordNub
-        [ (depPkgName d, ln)
-        | d <- targetBuildDepends bi
-        , ln <- NES.toList (depLibraries d)
-        ]
-    -- A local package's buck2 haskell_library() rule only ever declares
-    -- its own real source modules - unlike a real GHC package db entry,
-    -- it has no way to also claim modules reexported (`reexported-
-    -- modules:` in the .cabal file) from elsewhere. So a component that
-    -- depends on a local package with reexports (e.g. `Cabal` re-
-    -- exporting a chunk of `Cabal-syntax`) needs the reexport's origin
-    -- package added as an explicit direct dependency too, or - once
-    -- compile.bzl's `-hide-all-packages` is in effect - GHC can't find
-    -- the reexported module at all: "Could not load module ...". This
-    -- closure adds those origins (transitively, in case a reexporting
-    -- package itself depends on another reexporting package).
-    closeOverReexports seen [] = seen
-    closeOverReexports seen (p@(pn, ln) : rest)
-      | p `elem` seen = closeOverReexports seen rest
-      | otherwise =
-          let origins = fromMaybe [] (Map.lookup pn localIndex >>= Map.lookup ln . lpReexports)
-           in closeOverReexports (p : seen) (rest ++ origins)
+    self = (packageName pkgDesc, libName lib)
+    providers m = localProviders m ++ installedProviders m
+    localProviders m =
+      [ (pn, ln)
+      | (pn, ln) <- libraryDeps (libBuildInfo lib)
+      , Just lp <- [Map.lookup pn localIndex]
+      , l <- libsOf (lpDescription lp)
+      , libName l == ln
+      , m `elem` (exposedModules l ++ map moduleReexportName (reexportedModules l))
+      ]
+    installedProviders m =
+      [ (packageName ipi, IPI.sourceLibName ipi)
+      | (uid, _) <- componentPackageDeps clbi
+      , Just ipi <- [PackageIndex.lookupUnitId (installedPkgs lbi) uid]
+      , m `elem` map exposedName (IPI.exposedModules ipi)
+      ]
+    libsOf desc = maybeToList (library desc) ++ subLibraries desc
 
 -- | Resolve each module in @hs-source-dirs@ to its real file, trying
 -- @.hs@\/@.lhs@\/@.hsc@ (and the other extensions buck2\/haskell.bzl knows

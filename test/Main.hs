@@ -59,6 +59,7 @@ tests =
   , ("cache-config", cacheConfig)
   , ("source-deps", sourceDeps)
   , ("custom-setup", customSetup)
+  , ("reexports", reexports)
   ]
 
 -- | A copy of a fixture project, and how to run @cabal-buck2@ in it.
@@ -378,6 +379,32 @@ sourceDeps project = do
   unless removed $ failure "dist-newstyle/src/dep-1.0 should have been removed"
   appBzl' <- readIn project ("app" </> "BUCK.cabal.bzl")
   assertNotContains "app/BUCK.cabal.bzl" "dist-newstyle/src/dep-1.0" appBzl'
+
+-- | @reexported-modules@: a module re-exported from another package (by name
+-- or found in a dependency, renamed or not) or from another library of the
+-- package is recorded in the spec with where it comes from, which is how the
+-- library claims it - so that a package that depends on the library, and not
+-- on where the module is from, can import it. A module that is renamed from
+-- the library itself is a module of its own that re-exports it.
+reexports :: Project -> IO ()
+reexports project = do
+  _ <- buck2 project []
+  reBzl <- readIn project ("re-lib" </> "BUCK.cabal.bzl")
+  let re = assertContains "re-lib/BUCK.cabal.bzl"
+  re "'reexports'" reBzl
+  re "'module': 'Orig.A',\n                    'original': 'Orig.A',\n                    'from': {\n                        'package': 'base-lib',\n                        'dir': 'base-lib'," reBzl
+  re "'module': 'New.B',\n                    'original': 'Orig.B'," reBzl
+  re "'module': 'Sub.M',\n                    'original': 'Sub.M',\n                    'from': {\n                        'package': 're-lib',\n                        'library': 'sub'," reBzl
+  assertNotContains "re-lib/BUCK.cabal.bzl" "'module': 'New.X'" reBzl
+  -- Not exported by another library: a module of its own.
+  re "'New.X': {\n                    'autogen'" reBzl
+  shim <- readIn project ("re-lib" </> "cabal-buck2" </> "autogen" </> "reexports" </> "re-lib" </> "New" </> "X.hs")
+  assertContains "the New.X module" "module New.X (module Own.X) where" shim
+
+  -- What depends on the library doesn't need to depend on where they are from.
+  userBzl <- readIn project ("user" </> "BUCK.cabal.bzl")
+  assertContains "user/BUCK.cabal.bzl" "'package': 're-lib'" userBzl
+  assertNotContains "user/BUCK.cabal.bzl" "base-lib" userBzl
 
 -- | A package with a @Custom@ build type needs its @Setup.hs@ to be run, which
 -- is not done: it, and what depends on it, can't be built.

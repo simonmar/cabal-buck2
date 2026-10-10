@@ -13,30 +13,18 @@ import System.FilePath (takeDirectory, takeFileName, (</>))
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import qualified Distribution.Compat.NonEmptySet as NES
-
-import qualified Distribution.ModuleName as ModuleName
 import Distribution.Package (packageName)
 import Distribution.PackageDescription
-  ( Library (exposedModules, libBuildInfo, reexportedModules)
-  , BuildInfo (targetBuildDepends)
-  , LibraryName (LMainLibName)
-  , library
-  , libName
+  ( libName
   , pkgBuildableComponents
-  , subLibraries
   )
 import Distribution.Simple.InstallDirs (PathTemplate)
 import Distribution.Types.Component (Component (CLib))
 import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.LocalBuildInfo (LocalBuildInfo)
-import Distribution.Types.Dependency (depLibraries, depPkgName)
-import Distribution.Types.ModuleReexport
-  ( ModuleReexport (moduleReexportOriginalName, moduleReexportOriginalPackage)
-  )
 import Distribution.Types.PackageName (PackageName)
 
-import Distribution.Simple.Utils (die', notice, ordNub, warn)
+import Distribution.Simple.Utils (die', notice, warn)
 
 import Distribution.Client.Buck2.Generate
 import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), rootRelativeDir)
@@ -98,54 +86,10 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
     localIndex :: LocalPackageIndex
     localIndex =
       Map.fromList
-        [ (packageName pkgDesc, LocalPackage{lpDir = rootRelativeDir projectRoot (bpDir pkg), lpDescription = pkgDesc, lpReexports = reexportOrigins pkgDesc})
+        [ (packageName pkgDesc, LocalPackage{lpDir = rootRelativeDir projectRoot (bpDir pkg), lpDescription = pkgDesc})
         | pkg <- pkgs
         , let pkgDesc = bpDescription pkg
         ]
-    -- Every module exposed by any library of a local package, to resolve
-    -- a `reexported-modules:` entry that names only the bare module, not
-    -- an explicit `origin-package:Module` - Cabal itself resolves that
-    -- form by searching the reexporting package's own build-depends for
-    -- whichever one actually defines it, which for a *local* origin this
-    -- index can do too (an external origin doesn't need this: its real
-    -- .conf file already declares the reexport directly to ghc-pkg).
-    moduleOwners :: Map.Map ModuleName.ModuleName [(PackageName, LibraryName)]
-    moduleOwners =
-      Map.fromListWith
-        (flip (++))
-        [ (m, [(packageName pkgDesc, libName lib)])
-        | pkg <- pkgs
-        , let pkgDesc = bpDescription pkg
-        , lib <- allLibraries pkgDesc
-        , m <- exposedModules lib
-        ]
-    allLibraries pkgDesc = maybeToList (library pkgDesc) ++ subLibraries pkgDesc
-    -- The libraries each library of a package re-exports modules from,
-    -- other than itself.
-    reexportOrigins pkgDesc =
-      Map.fromList
-        [ (libName lib, origins)
-        | lib <- allLibraries pkgDesc
-        , let origins =
-                ordNub
-                  [ o
-                  | reexport <- reexportedModules lib
-                  , Just o <- [reexportOrigin pkgDesc lib reexport]
-                  , o /= (packageName pkgDesc, libName lib)
-                  ]
-        , not (null origins)
-        ]
-    reexportOrigin pkgDesc lib reexport = case moduleReexportOriginalPackage reexport of
-      Just pn
-        | pn == packageName pkgDesc -> pick (filter ((== pn) . fst) candidates)
-        | otherwise -> Just (pn, LMainLibName)
-      Nothing -> pick candidates
-      where
-        candidates = Map.findWithDefault [] (moduleReexportOriginalName reexport) moduleOwners
-        dependedOn = [(depPkgName d, ln) | d <- targetBuildDepends (libBuildInfo lib), ln <- NES.toList (depLibraries d)]
-        pick cs = case filter (`elem` dependedOn) cs ++ cs of
-          o : _ -> Just o
-          [] -> Nothing
 
 withoutPrefix :: String -> String
 withoutPrefix = fromMaybe <*> stripPrefix "cabal buck2: "
@@ -246,6 +190,7 @@ componentValue c =
       ++ listField "extensions" (scExtensions c)
       ++ listField "extra_libraries" (scExtraLibraries c)
       ++ valuesField "deps" (map depValue (scDeps c))
+      ++ valuesField "reexports" (map reexportValue (scReexports c))
       ++ valuesField "build_tools" (map buildToolValue (scBuildTools c))
       ++ listField "c_sources" (scCSources c)
       ++ listField "cc_options" (scCcOptions c)
@@ -269,6 +214,9 @@ depValue d =
     [("package", str (depPackage d))]
       ++ [("library", str lib) | Just lib <- [depLibrary d]]
       ++ [("dir", str dir) | Just dir <- [depDir d]]
+
+reexportValue :: SpecReexport -> Value
+reexportValue r = VDict [("module", str (reModule r)), ("original", str (reOriginal r)), ("from", depValue (reFrom r))]
 
 buildToolValue :: SpecBuildTool -> Value
 buildToolValue (LocalTool exe dir) = VDict [("exe", str exe), ("dir", str dir)]
