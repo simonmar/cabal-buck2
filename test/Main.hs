@@ -382,10 +382,9 @@ sourceDeps project = do
 
 -- | @reexported-modules@: a module re-exported from another package (by name
 -- or found in a dependency, renamed or not) or from another library of the
--- package is recorded in the spec with where it comes from, which is how the
+-- package is resolved as Cabal does, and recorded in the spec with where it comes from, which is how the
 -- library claims it - so that a package that depends on the library, and not
--- on where the module is from, can import it. A module that is renamed from
--- the library itself is a module of its own that re-exports it.
+-- on where the module is from, can import it. A module of the library itself is recorded without a library.
 reexports :: Project -> IO ()
 reexports project = do
   _ <- buck2 project []
@@ -395,11 +394,21 @@ reexports project = do
   re "'module': 'Orig.A',\n                    'original': 'Orig.A',\n                    'from': {\n                        'package': 'base-lib',\n                        'dir': 'base-lib'," reBzl
   re "'module': 'New.B',\n                    'original': 'Orig.B'," reBzl
   re "'module': 'Sub.M',\n                    'original': 'Sub.M',\n                    'from': {\n                        'package': 're-lib',\n                        'library': 'sub'," reBzl
-  assertNotContains "re-lib/BUCK.cabal.bzl" "'module': 'New.X'" reBzl
-  -- Not exported by another library: a module of its own.
-  re "'New.X': {\n                    'autogen'" reBzl
-  shim <- readIn project ("re-lib" </> "cabal-buck2" </> "autogen" </> "reexports" </> "re-lib" </> "New" </> "X.hs")
-  assertContains "the New.X module" "module New.X (module Own.X) where" shim
+  -- One of its own modules has no library it comes from, and no module of its own.
+  re "'module': 'New.X',\n                    'original': 'Own.X',\n                }," reBzl
+  assertNotContains "re-lib/BUCK.cabal.bzl" "'New.X': {" reBzl
+
+  -- What a library re-exports from another that re-exports it is recorded as
+  -- where it is defined, and by that name, as Cabal does.
+  re2Bzl <- readIn project ("re2" </> "BUCK.cabal.bzl")
+  assertContains "re2/BUCK.cabal.bzl" "'module': 'Newer.B',\n                    'original': 'Orig.B',\n                    'from': {\n                        'package': 'base-lib'," re2Bzl
+  assertContains "re2/BUCK.cabal.bzl" "'module': 'Orig.A',\n                    'original': 'Orig.A',\n                    'from': {\n                        'package': 'base-lib'," re2Bzl
+
+  -- A library with no modules has one that doesn't need base.
+  emptyBzl <- readIn project ("empty" </> "BUCK.cabal.bzl")
+  assertContains "empty/BUCK.cabal.bzl" "'CabalBuck2Empty'" emptyBzl
+  stub <- readIn project ("empty" </> "cabal-buck2" </> "autogen" </> "empty" </> "empty" </> "CabalBuck2Empty.hs")
+  assertContains "the empty module" "NoImplicitPrelude" stub
 
   -- What depends on the library doesn't need to depend on where they are from.
   userBzl <- readIn project ("user" </> "BUCK.cabal.bzl")

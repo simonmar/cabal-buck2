@@ -113,7 +113,9 @@ data SpecDep = SpecDep
 data SpecReexport = SpecReexport
   { reModule :: String
   , reOriginal :: String
-  , reFrom :: SpecDep
+  , reFrom :: Maybe SpecDep
+  -- ^ The library of another package or of its own that has the module, or
+  -- none if it is one of the library's own.
   }
 
 -- | An executable that a component's @build-tool-depends@ needs on @PATH@.

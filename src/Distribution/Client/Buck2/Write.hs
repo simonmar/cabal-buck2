@@ -216,7 +216,7 @@ depValue d =
       ++ [("dir", str dir) | Just dir <- [depDir d]]
 
 reexportValue :: SpecReexport -> Value
-reexportValue r = VDict [("module", str (reModule r)), ("original", str (reOriginal r)), ("from", depValue (reFrom r))]
+reexportValue r = VDict ([("module", str (reModule r)), ("original", str (reOriginal r))] ++ [("from", depValue d) | Just d <- [reFrom r]])
 
 buildToolValue :: SpecBuildTool -> Value
 buildToolValue (LocalTool exe dir) = VDict [("exe", str exe), ("dir", str dir)]
