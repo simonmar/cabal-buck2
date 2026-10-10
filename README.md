@@ -19,9 +19,13 @@ cabal install cabal-buck2
 Then in the root of your project or package:
 
 ```
-git clone https://github.com/simonmar/haskell-buck2.git buck2
+git clone https://github.com/simonmar/haskell-buck2.git buck2 -b <version>
 cabal buck2 --enable-tests
 ```
+
+Where `<version>` is the version of `cabal-buck`,
+e.g. `0.1.0.0`. Checking out the branch ensures that you get a
+compatible copy of the Buck2 support code.
 
 Then you can use `buck2` as the build tool, e.g.
 
