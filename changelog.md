@@ -1,6 +1,8 @@
 # 0.4.0.0
 
-  * For `cabal-install` version 3.18
+  * For `cabal-install` version 3.19 (the master branch of cabal), for
+    its fix of building a package of a bootstrap compiler with
+    `allow-boot-library-installs` (cabal 3ff1bf002).
   * `--enable-custom-setup` builds the packages with `build-type:
     Custom` as if they had `build-type: Configure` (if they have a
     `configure` script) or `Simple`, instead of skipping them. Their
