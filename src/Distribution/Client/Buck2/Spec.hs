@@ -27,6 +27,10 @@ data BuildSpec = BuildSpec
   -- ^ The package's @data-dir@, relative to its directory.
   , specDataFiles :: [FilePath]
   -- ^ Its @data-files@, as patterns, relative to 'specDataDir'.
+  , specExtraSourceFiles :: [FilePath]
+  -- ^ Its @extra-source-files@, as patterns, relative to its directory:
+  -- what its build needs, other than its sources, which something
+  -- elsewhere in the project may need too (a generator, say).
   , specComponents :: [SpecComponent]
   }
 
@@ -53,6 +57,8 @@ data SpecComponent = SpecComponent
   -- ^ The main module's source; not for a library.
   , scSrcs :: [(String, Src)]
   -- ^ Every other module (by module name) and its source.
+  , scBootSrcs :: [(String, FilePath)]
+  -- ^ The @.hs-boot@ file of each module that has one, next to its source.
   , scTestArgs :: [String]
   -- ^ The project's @test-options@ for a test-suite, with template variables
   -- expanded.

@@ -3,6 +3,8 @@ name:                lib-pkg
 version:             0.1.0.0
 build-type:          Simple
 
+extra-source-files: include/*.h
+
 library
   exposed-modules:   MyLib
   hs-source-dirs:    src

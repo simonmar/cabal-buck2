@@ -272,6 +272,11 @@ basic project = do
   lib "local_build_spec" libBzl
   lib "'kind': 'library'" libBzl
   lib "'name': 'lib-pkg'" libBzl
+  -- extra-source-files reach the spec as they are (patterns), for
+  -- cabal.bzl to glob.
+  lib "'extra_source_files': [\n        'include/*.h',\n    ]" libBzl
+  -- A module's boot file is found next to its source.
+  lib "'boot_srcs': {\n                'MyLib': 'src/MyLib.hs-boot',\n            }" libBzl
   noLib "haskell_library(" libBzl
   -- Project-level options and test options are only recorded where they
   -- apply.

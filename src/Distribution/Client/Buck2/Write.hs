@@ -214,6 +214,7 @@ specValue spec =
       ++ [ ("data", VDict [("dir", str (specDataDir spec)), ("files", strList (specDataFiles spec))])
          | not (null (specDataFiles spec))
          ]
+      ++ listField "extra_source_files" (specExtraSourceFiles spec)
       ++ [("components", VList (map componentValue (specComponents spec)))]
 
 componentValue :: SpecComponent -> Value
@@ -223,6 +224,7 @@ componentValue c =
       ++ [("exe_name", str exe) | Just exe <- [scExeName c]]
       ++ [("main_is", srcValue src) | Just src <- [scMainIs c]]
       ++ [("srcs", VDict [(m, srcValue src) | (m, src) <- scSrcs c]) | not (null (scSrcs c))]
+      ++ [("boot_srcs", VDict [(m, str boot) | (m, boot) <- scBootSrcs c]) | not (null (scBootSrcs c))]
       ++ listField "test_args" (scTestArgs c)
       ++ listField "ghc_options" (scGhcOptions c)
       ++ listField "cpp_options" (scCppOptions c)

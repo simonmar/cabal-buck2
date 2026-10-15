@@ -9,6 +9,12 @@
   * A project can override the generated targets of its packages in a
     `cabal-buck2.bzl` at its root, rather than in each package's
     `BUCK` file.
+  * A package's `extra-source-files` are a target,
+    `<package>-extra-source-files`, for other targets that need them
+    (a generator of the package's sources, say).
+  * The `.hs-boot` file of a module is an input of the module's
+    compilation, and is found next to its source when that is
+    generated (by `happy`, say).
 
 # 0.3.0.0
 

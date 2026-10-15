@@ -27,7 +27,7 @@ module Distribution.Client.Buck2.Generate
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
-import System.FilePath (isRelative, makeRelative, normalise, (<.>), (</>))
+import System.FilePath (isRelative, makeRelative, normalise, replaceExtension, (<.>), (</>))
 
 import Data.Either (fromLeft)
 import qualified Data.Map as Map
@@ -62,6 +62,7 @@ import Distribution.PackageDescription
   , cxxSources
   , dataDir
   , dataFiles
+  , extraSrcFiles
   , usedExtensions
   , defaultLanguage
   , extraLibs
@@ -240,7 +241,7 @@ generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools p
       lookupComponent (localPkgDescr lbi) (componentName comp)
 
     results = map generate comps
-    components = concatMap ctSpec results
+    components = [c{scBootSrcs = bootSources sources (scSrcs c)} | c <- concatMap ctSpec results]
     targets =
       PackageTargets
         { ptSpec = packageSpec pkgDesc (packageGhcOptions pkgDesc componentLBIs) components
@@ -490,6 +491,7 @@ packageSpec pkgDesc projectGhcOptions components =
     , specGhcOptions = projectGhcOptions
     , specDataDir = getSymbolicPath (dataDir pkgDesc)
     , specDataFiles = map getSymbolicPath (dataFiles pkgDesc)
+    , specExtraSourceFiles = map getSymbolicPath (extraSrcFiles pkgDesc)
     , specComponents = components
     }
 
@@ -503,6 +505,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scExeName = Nothing
     , scMainIs = Nothing
     , scSrcs = []
+    , scBootSrcs = []
     , scTestArgs = []
     , scGhcOptions = hcOptions GHC bi
     , scCppOptions = cppOptions bi
@@ -802,6 +805,15 @@ detailedTestStub targetName testModule = (SrcAutogen name, file)
 moduleCandidates :: BuildInfo -> ModuleName.ModuleName -> [FilePath]
 moduleCandidates bi m = [normalise (dir </> ModuleName.toFilePath m <.> ext) | dir <- sourceDirs bi, ext <- ["hs", "lhs", "hsc", "x", "y", "ly"]]
 
+-- | Where GHC looks for the boot file of a module whose source is the given
+-- file: next to it.
+bootCandidates :: FilePath -> [FilePath]
+bootCandidates src = [replaceExtension src ext | ext <- ["hs-boot", "lhs-boot"]]
+
+-- | The boot files of the modules with the given sources, that exist.
+bootSources :: Set FilePath -> [(String, Src)] -> [(String, FilePath)]
+bootSources sources srcs = [(m, boot) | (m, SrcFile src) <- srcs, Just boot <- [firstExisting sources (bootCandidates src)]]
+
 mainIsCandidates :: BuildInfo -> FilePath -> [FilePath]
 mainIsCandidates bi mainIs = [normalise (dir </> mainIs) | dir <- sourceDirs bi]
 
@@ -836,7 +848,7 @@ sourceCandidates pkgDesc = ordNub (concatMap candidates (pkgBuildableComponents 
       CFLib _ -> []
       where
         bi = componentBuildInfo comp
-    modules bi = concatMap (moduleCandidates bi)
+    modules bi = concatMap (\m -> let cs = moduleCandidates bi m in cs ++ concatMap bootCandidates cs)
     mainIs = mainIsCandidates
 
 sourceDirs :: BuildInfo -> [FilePath]
