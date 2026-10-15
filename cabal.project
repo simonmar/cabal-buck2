@@ -2,3 +2,10 @@ packages: .
 
 program-options
     ghc-options: -Werror
+
+-- cabal-install 3.19 (cabal's master branch), until 3.20 is released.
+source-repository-package
+    type: git
+    location: https://github.com/haskell/cabal.git
+    tag: 59f735663d248b552724d087c3113051c255c32e
+    subdir: Cabal-syntax Cabal cabal-install-solver cabal-install hooks-exe
