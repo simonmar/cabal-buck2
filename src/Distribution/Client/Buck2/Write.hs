@@ -7,8 +7,8 @@ import Distribution.Client.Compat.Prelude
 import Prelude ()
 
 import Data.List (stripPrefix)
-import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
+import System.FilePath (takeDirectory, takeExtension, takeFileName, (</>))
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -21,10 +21,10 @@ import Distribution.PackageDescription
 import Distribution.Simple.InstallDirs (PathTemplate)
 import Distribution.Types.Component (Component (CLib))
 import Distribution.Types.ComponentName (ComponentName)
-import Distribution.Types.LocalBuildInfo (LocalBuildInfo)
+import Distribution.Types.LocalBuildInfo (LocalBuildInfo, localPkgDescr)
 import Distribution.Types.PackageName (PackageName)
 
-import Distribution.Simple.Utils (die', notice, warn)
+import Distribution.Simple.Utils (die', notice, ordNub, warn)
 
 import Distribution.Client.Buck2.Generate
 import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), rootRelativeDir)
@@ -51,16 +51,10 @@ import Distribution.Client.Buck2.Version (cabalBuck2Version)
 --     easily referenced from anywhere else.
 writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> Bool -> IO ()
 writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs keepGoing = do
-  sources <- traverse (\pkg -> Set.fromList <$> filterM (doesFileExist . (bpDir pkg </>)) (sourceCandidates (bpDescription pkg))) pkgs
-  let generateAll skipped = [generate skipped pkg srcs | (pkg, srcs) <- zip pkgs sources]
-      -- A library without a rule makes the components that depend on it
-      -- skipped, and a library among those makes more of them skipped, so
-      -- this goes on until nothing changes.
-      fixpoint skipped =
-        let results = generateAll skipped
-            skipped' = skipped <> Set.fromList (concat [librariesWithoutRule pkg r | (pkg, r) <- zip pkgs results])
-         in if skipped' == skipped then results else fixpoint skipped'
-  let results = zip pkgs (fixpoint Set.empty)
+  sources <- traverse (\pkg -> Set.fromList <$> filterM (doesFileExist . (bpDir pkg </>)) (candidates pkg)) pkgs
+  -- The packages of each package set (the project's, and each later stage's)
+  -- depend only on each other, so each set is generated separately.
+  let results = concatMap generateSet (Map.elems (Map.fromListWith (flip (++)) [(bpPackageSet pkg, [(pkg, srcs)]) | (pkg, srcs) <- zip pkgs sources]))
       problems = concat [warnings | (_, (_, warnings)) <- results]
   unless (null problems) $
     if keepGoing
@@ -74,8 +68,32 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
   writePackagesFile verbosity projectRoot pkgs
   traverse_ (writeOnePackage verbosity projectRoot) results
   where
-    generate skipped pkg srcs =
-      generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (bpCustomSetup pkg) (bpDescription pkg)
+    -- Configuring may add sources (a @configure@ script's @.buildinfo@ file
+    -- can), so those of the configured package are candidates too.
+    candidates pkg =
+      ordNub $
+        concatMap
+          sourceCandidates
+          (bpDescription pkg : [localPkgDescr lbi | ((name, _), lbi) <- Map.toList componentLBIs, name == packageName (bpDescription pkg)])
+    generateSet set =
+      let localIndex = Map.fromList [(packageName (bpDescription pkg), LocalPackage{lpDescription = bpDescription pkg}) | (pkg, _) <- set]
+          generateAll skipped = [generate localIndex skipped pkg srcs | (pkg, srcs) <- set]
+          -- A library without a rule makes the components that depend on it
+          -- skipped, and a library among those makes more of them skipped, so
+          -- this goes on until nothing changes.
+          fixpoint skipped =
+            let results = generateAll skipped
+                skipped' = skipped <> Set.fromList (concat [librariesWithoutRule pkg r | ((pkg, _), r) <- zip set results])
+             in if skipped' == skipped then results else fixpoint skipped'
+       in zip (map fst set) (fixpoint Set.empty)
+
+    generate localIndex skipped pkg srcs =
+      generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (providedModules pkg) (bpDescription pkg)
+
+    providedModules pkg
+      | isJust (bpPackageSet pkg) = AllMissingModules
+      | bpCustomSetup pkg = SetupGeneratedModules
+      | otherwise = NoProvidedModules
 
     librariesWithoutRule pkg (targets, _) =
       [ (packageName desc, libName lib)
@@ -85,14 +103,6 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
       where
         desc = bpDescription pkg
 
-    localIndex :: LocalPackageIndex
-    localIndex =
-      Map.fromList
-        [ (packageName pkgDesc, LocalPackage{lpDescription = pkgDesc})
-        | pkg <- pkgs
-        , let pkgDesc = bpDescription pkg
-        ]
-
 -- | Writes @cabal-buck2\/packages.bzl@ in the project root, which says where
 -- each package is, as its directory relative to the project root. @buck2\/cabal.bzl@
 -- loads it to find the targets of the packages that a package depends on, and
@@ -101,7 +111,8 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
 --
 -- It also passes on the project's own customisation of the generated
 -- targets: the @OVERRIDES@ of a @cabal-buck2.bzl@ in the project root, if
--- there is one (see @buck2\/cabal.bzl@).
+-- there is one, and if there are later stages, its @PACKAGE_SET_MODIFIERS@
+-- (see @buck2\/cabal.bzl@).
 writePackagesFile :: Verbosity -> FilePath -> [BuiltPackage] -> IO ()
 writePackagesFile verbosity projectRoot pkgs = do
   createDirectoryIfMissing True (takeDirectory path)
@@ -117,35 +128,46 @@ writePackagesFile verbosity projectRoot pkgs = do
           , "# adding or removing cabal-buck2.bzl."
           , "#"
           , "# The directory of each package that this project builds, from the root of"
-          , "# the project, and the project's overrides of the generated targets. See"
-          , "# buck2/cabal.bzl."
+          , "# the project (PACKAGES, and for each later stage, PACKAGE_SETS), and the"
+          , "# project's overrides of the generated targets. See buck2/cabal.bzl."
           , ""
           ]
             ++ ["load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" | hasOverrides]
-            ++ ["", "OVERRIDES = " ++ (if hasOverrides then "_OVERRIDES" else "{}"), ""]
+            ++ ["load(\"//:cabal-buck2.bzl\", _PACKAGE_SET_MODIFIERS = \"PACKAGE_SET_MODIFIERS\")" | hasOverrides, hasLaterStages]
+            ++ [ ""
+               , "OVERRIDES = " ++ (if hasOverrides then "_OVERRIDES" else "{}")
+               , "PACKAGE_SET_MODIFIERS = " ++ (if hasOverrides && hasLaterStages then "_PACKAGE_SET_MODIFIERS" else "{}")
+               , ""
+               ]
         )
-        ++ renderBinding "PACKAGES" (VDict (Map.toList packages))
-    packages =
+        ++ renderBinding "PACKAGES" (VDict (Map.toList (packagesOf Nothing)))
+        ++ "\n"
+        ++ renderBinding "PACKAGE_SETS" (VDict [(s, VDict (Map.toList (packagesOf (Just s)))) | s <- ordNub (mapMaybe bpPackageSet pkgs)])
+    hasLaterStages = any (isJust . bpPackageSet) pkgs
+    packagesOf set =
       Map.fromList
         [ (prettyShow (packageName (bpDescription pkg)), str (rootRelativeDir projectRoot (bpDir pkg)))
         | pkg <- pkgs
+        , bpPackageSet pkg == set
         ]
 
 withoutPrefix :: String -> String
 withoutPrefix = fromMaybe <*> stripPrefix "cabal buck2: "
 
 writeOnePackage :: Verbosity -> FilePath -> (BuiltPackage, (PackageTargets, [String])) -> IO ()
-writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc}, (targets, _)) = do
+writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc, bpPackageSet = packageSet}, (allTargets, _)) = do
+  targets <- withGeneratedHeaders projectRoot allTargets
   let pkgName = packageName pkgDesc
       bzlPath = pkgDir </> "BUCK.cabal.bzl"
       buckPath = pkgDir </> "BUCK"
   traverse_ (notice verbosity) (ptNotes targets)
   when (ptComponentCount targets == 0) $
     warn verbosity $ "cabal buck2: no buck2 targets generated for package " ++ prettyShow pkgName
-  writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets))
+  writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets){specPackageSet = packageSet})
+  traverse_ (writeFile (pkgDir </> "PACKAGE") . renderStagePackageFile) packageSet
   buckExists <- doesFileExist buckPath
   unless buckExists $ writeFile buckPath renderBuckWrapper
-  writeAutogenBuck pkgDir pkgName targets
+  writeAutogenBuck projectRoot pkgDir pkgName targets
   notice verbosity $
     "cabal buck2: generated "
       ++ (rootRelativeDir projectRoot pkgDir </> "BUCK.cabal.bzl")
@@ -157,17 +179,49 @@ writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescriptio
 -- | Generate an @export_file()@ rule for each autogen file, so that
 -- the files can be easily referenced from somewhere else, including
 -- subdirs.
-writeAutogenBuck :: FilePath -> PackageName -> PackageTargets -> IO ()
-writeAutogenBuck pkgDir pkgName targets
-  | null files = return ()
+writeAutogenBuck :: FilePath -> FilePath -> PackageName -> PackageTargets -> IO ()
+writeAutogenBuck projectRoot pkgDir pkgName targets
+  | null files && null generatedHeaders = return ()
   | otherwise = do
       createDirectoryIfMissing True autogenDir
       for_ files $ \f -> do
         createDirectoryIfMissing True (takeDirectory (autogenDir </> autogenPath f))
         writeFile (autogenDir </> autogenPath f) (autogenContents f)
-      writeFile (autogenDir </> "BUCK") (renderFile header [] exportCalls)
+      -- Copies of the headers that configure scripts generated, which are
+      -- outside the package (in Cabal's build directory).
+      for_ generatedHeaders $ \(c, copies) -> do
+        removePathForcibly (autogenDir </> generatedHeadersDir c)
+        for_ copies $ \(dir, copy) -> copyHeaders (projectRoot </> dir) (autogenDir </> copy)
+      writeFile (autogenDir </> "BUCK") (renderFile header [] (exportCalls ++ headerCalls))
   where
     files = ptAutogenFiles targets
+    generatedHeaders =
+      [ (c, [(dir, generatedHeadersDir c </> show i) | (i, dir) <- zip [0 :: Int ..] (scGeneratedIncludeDirs c)])
+      | c <- specComponents (ptSpec targets)
+      , not (null (scGeneratedIncludeDirs c))
+      ]
+    headerCalls =
+      [ call
+        "prebuilt_cxx_library"
+        [ ("name", str (generatedHeadersTarget c))
+        , ("header_only", VBool True)
+        , ("header_dirs", strList (map snd copies))
+        , ("visibility", strList ["PUBLIC"])
+        ]
+      | (c, copies) <- generatedHeaders
+      ]
+        -- Each directory as such too, for whatever else needs the headers
+        -- (a generator, say).
+        ++ [ call
+             "export_file"
+             [ ("name", str name)
+             , ("src", str copy)
+             , ("visibility", strList ["PUBLIC"])
+             ]
+           | (c, copies) <- generatedHeaders
+           , (copy, i) <- zip (map snd copies) [0 :: Int ..]
+           , let name = generatedIncludeDirTarget c i
+           ]
     autogenDir = pkgDir </> "cabal-buck2" </> "autogen"
     header =
       "@generated by `cabal buck2` from "
@@ -186,6 +240,57 @@ writeAutogenBuck pkgDir pkgName targets
         ]
       | f <- files
       ]
+
+-- | Where the copies of the headers that a component's configure script
+-- generated go, in the package's @cabal-buck2\/autogen@ directory, and the
+-- target that has them.
+generatedHeadersDir :: SpecComponent -> FilePath
+generatedHeadersDir c = scName c </> "generated-include"
+
+generatedHeadersTarget :: SpecComponent -> String
+generatedHeadersTarget c = scName c ++ "-generated-headers"
+
+-- | The target of each of the directories of copies (as an include directory
+-- of the package, say).
+generatedIncludeDirTarget :: SpecComponent -> Int -> String
+generatedIncludeDirTarget c i = generatedHeadersTarget c ++ "-" ++ show i
+
+-- | The targets with only the generated include directories that have
+-- headers in them (as a configure script may have generated none in some).
+withGeneratedHeaders :: FilePath -> PackageTargets -> IO PackageTargets
+withGeneratedHeaders projectRoot targets = do
+  components <- for (specComponents spec) $ \c -> do
+    dirs <- filterM (hasHeaders . (projectRoot </>)) (scGeneratedIncludeDirs c)
+    return c{scGeneratedIncludeDirs = dirs}
+  return targets{ptSpec = spec{specComponents = components}}
+  where
+    spec = ptSpec targets
+
+isHeader :: FilePath -> Bool
+isHeader f = takeExtension f `elem` [".h", ".hh", ".hpp", ".hxx", ".inc"]
+
+hasHeaders :: FilePath -> IO Bool
+hasHeaders path = do
+  isDir <- doesDirectoryExist path
+  if isDir
+    then anyM (hasHeaders . (path </>)) =<< listDirectory path
+    else (&& isHeader path) <$> doesFileExist path
+  where
+    anyM p = foldr (\x rest -> p x >>= \b -> if b then return True else rest) (return False)
+
+-- | Copy the headers in a directory tree (which may have the rest of what
+-- a configure script left in it too).
+copyHeaders :: FilePath -> FilePath -> IO ()
+copyHeaders from to = do
+  isDir <- doesDirectoryExist from
+  isFile <- doesFileExist from
+  if isDir
+    then do
+      entries <- listDirectory from
+      for_ entries $ \e -> copyHeaders (from </> e) (to </> e)
+    else when (isFile && isHeader from) $ do
+      createDirectoryIfMissing True (takeDirectory to)
+      copyFile from to
 
 renderGeneratedBzl :: PackageName -> BuildSpec -> String
 renderGeneratedBzl pkgName spec =
@@ -210,6 +315,7 @@ specValue spec =
     [ ("cabal_buck2", str cabalBuck2Version)
     , ("package", VDict [("name", str (specPackageName spec)), ("version", str (specPackageVersion spec))])
     ]
+      ++ [("package_set", str s) | Just s <- [specPackageSet spec]]
       ++ listField "ghc_options" (specGhcOptions spec)
       ++ [ ("data", VDict [("dir", str (specDataDir spec)), ("files", strList (specDataFiles spec))])
          | not (null (specDataFiles spec))
@@ -242,10 +348,13 @@ componentValue c =
       ++ listField "cxx_options" (scCxxOptions c)
       ++ listField "cmm_sources" (scCmmSources c)
       ++ listField "asm_sources" (scAsmSources c)
+      ++ [("provided_sources", VDict [(f, str k) | (f, k) <- scProvidedSources c]) | not (null (scProvidedSources c))]
       ++ listField "asm_options" (scAsmOptions c)
       ++ listField "include_dirs" (scIncludeDirs c)
+      ++ listField "includes" (scIncludes c)
       ++ listField "hsc_options" (scHscOptions c)
-      ++ listField "generated_include_dirs" (scGeneratedIncludeDirs c)
+      ++ [("generated_headers", str (generatedHeadersTarget c)) | not (null (scGeneratedIncludeDirs c))]
+      ++ listField "generated_include_dirs" [generatedIncludeDirTarget c i | i <- [0 .. length (scGeneratedIncludeDirs c) - 1]]
       ++ listField "pkgconfig" (scPkgconfig c)
 
 srcValue :: Src -> Value
@@ -276,6 +385,20 @@ valuesField _ [] = []
 valuesField k xs = [(k, VList xs)]
 
 -- | Content of @BUCK@ in a package's directory
+-- | The @PACKAGE@ file of a package of a later stage: its targets are
+-- configured for the stage (with the project's @PACKAGE_SET_MODIFIERS@ for
+-- it), so that whatever builds them builds them for the stage.
+renderStagePackageFile :: String -> String
+renderStagePackageFile set =
+  unlines
+    [ "# @generated by `cabal buck2` - do not edit by hand."
+    , ""
+    , "load(\"@prelude//cfg/modifier/set_cfg_modifiers.bzl\", \"set_cfg_modifiers\")"
+    , "load(\"//cabal-buck2:packages.bzl\", \"PACKAGE_SET_MODIFIERS\")"
+    , ""
+    , "set_cfg_modifiers(cfg_modifiers = PACKAGE_SET_MODIFIERS.get(" ++ show set ++ ", []))"
+    ]
+
 renderBuckWrapper :: String
 renderBuckWrapper =
   unlines

@@ -32,6 +32,10 @@ data BuildSpec = BuildSpec
   -- what its build needs, other than its sources, which something
   -- elsewhere in the project may need too (a generator, say).
   , specComponents :: [SpecComponent]
+  , specPackageSet :: Maybe String
+  -- ^ The later stage that the package is of, if any (see
+  -- "Distribution.Client.Buck2.LaterStage"): its dependencies are the
+  -- packages of the same stage.
   }
 
 data ComponentKind = Library | Executable | TestSuite | Benchmark
@@ -59,6 +63,10 @@ data SpecComponent = SpecComponent
   -- ^ Every other module (by module name) and its source.
   , scBootSrcs :: [(String, FilePath)]
   -- ^ The @.hs-boot@ file of each module that has one, next to its source.
+  , scProvidedSources :: [(FilePath, String)]
+  -- ^ The C\/C++\/Cmm\/assembler sources that don't exist, which the project
+  -- provides (see 'SrcProvided'), each with the spec key of its kind
+  -- (@c_sources@, say). They are not in the lists of their kind.
   , scTestArgs :: [String]
   -- ^ The project's @test-options@ for a test-suite, with template variables
   -- expanded.
@@ -87,6 +95,9 @@ data SpecComponent = SpecComponent
   , scAsmSources :: [FilePath]
   , scAsmOptions :: [String]
   , scIncludeDirs :: [FilePath]
+  , scIncludes :: [FilePath]
+  -- ^ The headers that what is compiled against the library includes
+  -- (Cabal's @includes@).
   , scHscOptions :: [String]
   -- ^ Defines for the C compiler of @hsc2hs@, which say what the code is
   -- compiled for (GHC does this itself for Haskell code).

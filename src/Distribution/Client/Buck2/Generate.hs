@@ -19,6 +19,7 @@ module Distribution.Client.Buck2.Generate
   , LocalPackage (..)
   , AutogenFile (..)
   , PackageTargets (..)
+  , ProvidedModules (..)
   , generatePackageTargets
   , sourceCandidates
   , libTargetName
@@ -27,7 +28,7 @@ module Distribution.Client.Buck2.Generate
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
-import System.FilePath (isRelative, makeRelative, normalise, replaceExtension, (<.>), (</>))
+import System.FilePath (dropTrailingPathSeparator, isRelative, makeRelative, normalise, replaceExtension, (<.>), (</>))
 
 import Data.Either (fromLeft)
 import qualified Data.Map as Map
@@ -71,6 +72,7 @@ import Distribution.PackageDescription
   , hcOptions
   , hsSourceDirs
   , includeDirs
+  , includes
   , otherModules
   , buildType
   , lookupComponent
@@ -78,7 +80,8 @@ import Distribution.PackageDescription
   , pkgconfigDepends
   , targetBuildDepends
   )
-import Distribution.Simple.Compiler (compilerInfo)
+import Distribution.Simple.Compiler (compilerInfo, compilerVersion)
+import Distribution.Version (Version, mkVersion)
 import qualified Distribution.InstalledPackageInfo as IPI
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Types.ExposedModule (ExposedModule (..))
@@ -180,13 +183,25 @@ instance Monoid ComponentTargets where
 componentTargets :: SpecComponent -> [AutogenFile] -> ComponentTargets
 componentTargets component files = mempty{ctSpec = [component], ctAutogen = files}
 
+-- | Which of a package's modules that have no source the project provides
+-- (see 'SrcProvided'), rather than the components with them being skipped.
+data ProvidedModules
+  = NoProvidedModules
+  | -- | Those that the package's own @Setup.hs@ would generate (its
+    -- @autogen-modules@): it has @build-type: Custom@ and is built as if it
+    -- didn't (@--enable-custom-setup@), so its @Setup.hs@ isn't run.
+    SetupGeneratedModules
+  | -- | All of them: the package is of a later stage (see
+    -- "Distribution.Client.Buck2.LaterStage"), one of the project's own, built
+    -- as the project's build system (not Cabal) says.
+    AllMissingModules
+
 -- | What the modules of a package's components are found in.
 data Sources = Sources
   { sourceFiles :: Set FilePath
   -- ^ The package's source files, relative to its directory.
-  , providedModules :: Set ModuleName.ModuleName
-  -- ^ The modules that the package's own @Setup.hs@ would have generated,
-  -- which the project provides instead (see 'SrcProvided').
+  , providedModule :: ModuleName.ModuleName -> Bool
+  -- ^ Whether the project provides the module, if it has no source.
   }
 
 -- | Generate the buck2 targets for every buildable component of a local
@@ -214,26 +229,18 @@ generatePackageTargets
   -- ^ Whether this is a package of the project, as opposed to a dependency
   -- that is built like one. A dependency has components that nothing
   -- needs (its tests, say), which are skipped without a warning.
-  -> Bool
-  -- ^ Whether the package has @build-type: Custom@, and is built as if it
-  -- didn't (@--enable-custom-setup@), so its @Setup.hs@ isn't run: the
-  -- modules that would have generated (its @autogen-modules@, other than
-  -- the ones generated here) are up to the project.
+  -> ProvidedModules
   -> PackageDescription
   -> (PackageTargets, [String])
-generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject customSetup pkgDesc =
+generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject providedModules pkgDesc =
   (targets, concatMap ctWarnings results)
   where
     generate = generateComponent localIndex projectRoot componentLBIs externalBuildTools projectTestOptions (Sources sources provided) skippedLibs inProject pkgDesc
-    provided
-      | customSetup =
-          Set.fromList
-            [ m
-            | comp <- pkgBuildableComponents pkgDesc
-            , m <- autogenModules (componentBuildInfo comp)
-            , m /= autogenPathsModuleName pkgDesc
-            ]
-      | otherwise = Set.empty
+    provided = case providedModules of
+      NoProvidedModules -> const False
+      AllMissingModules -> const True
+      SetupGeneratedModules ->
+        (`Set.member` Set.fromList [m | comp <- pkgBuildableComponents pkgDesc, m <- autogenModules (componentBuildInfo comp)])
     comps = map configured (pkgBuildableComponents pkgDesc)
 
     -- The component as configuring left it: with what a @configure@ script
@@ -243,7 +250,28 @@ generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools p
       lookupComponent (localPkgDescr lbi) (componentName comp)
 
     results = map generate comps
-    components = [c{scBootSrcs = bootSources sources (scSrcs c)} | c <- concatMap ctSpec results]
+    components = [providedSources c{scBootSrcs = bootSources sources (scSrcs c)} | c <- concatMap ctSpec results]
+
+    -- Only a later stage's packages have sources that don't exist.
+    providedSources c = case providedModules of
+      AllMissingModules ->
+        let (cs, cmissing) = partition exists (scCSources c)
+            (cxxs, cxxmissing) = partition exists (scCxxSources c)
+            (cmms, cmmmissing) = partition exists (scCmmSources c)
+            (asms, asmmissing) = partition exists (scAsmSources c)
+         in c
+              { scCSources = cs
+              , scCxxSources = cxxs
+              , scCmmSources = cmms
+              , scAsmSources = asms
+              , scProvidedSources =
+                  [(f, "c_sources") | f <- cmissing]
+                    ++ [(f, "cxx_sources") | f <- cxxmissing]
+                    ++ [(f, "cmm_sources") | f <- cmmmissing]
+                    ++ [(f, "asm_sources") | f <- asmmissing]
+              }
+      _ -> c
+    exists f = normalise f `Set.member` sources
     targets =
       PackageTargets
         { ptSpec = packageSpec pkgDesc (packageGhcOptions pkgDesc componentLBIs) components
@@ -347,7 +375,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
               -- nothing to build, which a rule can't have.
               extra :: [(ModuleName.ModuleName, AutogenFile)]
               extra
-                | null srcs = [(ModuleName.fromString "CabalBuck2Empty", emptyModule targetName)]
+                | null srcs = [(ModuleName.fromString "CabalBuck2Empty", emptyModule (compilerVersion (compiler lbi)) targetName)]
                 | otherwise = []
            in componentTargets
                 (specComponent localIndex externalBuildTools Library targetName bi)
@@ -461,28 +489,38 @@ unsupportedSources bi =
   ]
 
 -- | A module with nothing in it, for a library to have one (a rule can't have
--- none). It imports nothing, not even the Prelude, as the library may not
--- depend on @base@.
-emptyModule :: String -> AutogenFile
-emptyModule targetName =
+-- none). It imports nothing, not even the Prelude or (with a GHC that would
+-- import it) GHC.Essentials, as the library may depend on neither @base@ nor
+-- @ghc-internal@.
+emptyModule :: Version -> String -> AutogenFile
+emptyModule ghcVersion targetName =
   AutogenFile
     { autogenName = targetName ++ "-empty"
     , autogenPath = "empty" </> targetName </> "CabalBuck2Empty.hs"
-    , autogenContents = "{-# LANGUAGE NoImplicitPrelude #-}\n-- @generated by `cabal buck2` - do not edit by hand.\nmodule CabalBuck2Empty () where\n"
+    , autogenContents =
+        unlines $
+          ["{-# LANGUAGE NoImplicitPrelude #-}"]
+            ++ ["{-# OPTIONS_GHC -frebindable-known-names #-}" | ghcVersion >= mkVersion [10, 1]]
+            ++ ["-- @generated by `cabal buck2` - do not edit by hand.", "module CabalBuck2Empty () where"]
     }
 
 -- | Where a @configure@ script (for a package with the @Configure@ build type)
--- put the headers it generated: in the build directory, in a directory like
--- each of the package's relative @include-dirs@.
+-- put the headers it generated: in the build directory, and in a directory
+-- like each of the package's relative @include-dirs@ there. Cabal makes all
+-- of them include directories of the package's C.
 generatedIncludeDirs :: FilePath -> PackageDescription -> LocalBuildInfo -> BuildInfo -> [FilePath]
 generatedIncludeDirs projectRoot pkgDesc lbi bi
   | buildType pkgDesc == Configure =
-      [ makeRelative projectRoot (getSymbolicPath (buildDir lbi)) </> dir
-      | d <- includeDirs bi
-      , let dir = getSymbolicPath d
-      , isRelative dir
-      ]
+      ordNub . map (dropTrailingPathSeparator . normalise) $
+        build
+          : [ build </> dir
+            | d <- includeDirs bi
+            , let dir = getSymbolicPath d
+            , isRelative dir
+            ]
   | otherwise = []
+  where
+    build = makeRelative projectRoot (getSymbolicPath (buildDir lbi))
 
 -- | A package's build spec.
 packageSpec :: PackageDescription -> [String] -> [SpecComponent] -> BuildSpec
@@ -495,6 +533,7 @@ packageSpec pkgDesc projectGhcOptions components =
     , specDataFiles = map getSymbolicPath (dataFiles pkgDesc)
     , specExtraSourceFiles = map getSymbolicPath (extraSrcFiles pkgDesc)
     , specComponents = components
+    , specPackageSet = Nothing
     }
 
 -- | A component of a build spec, from its 'BuildInfo'. The kind-specific
@@ -508,6 +547,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scMainIs = Nothing
     , scSrcs = []
     , scBootSrcs = []
+    , scProvidedSources = []
     , scTestArgs = []
     , scGhcOptions = hcOptions GHC bi
     , scCppOptions = cppOptions bi
@@ -528,6 +568,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCcOptions = ccOptions bi
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
+    , scIncludes = map getSymbolicPath (includes bi)
     , scHscOptions = []
     , scGeneratedIncludeDirs = []
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
@@ -737,7 +778,7 @@ resolveOne sources pkgDesc mlbiClbi bi m
   | otherwise = case firstExisting (sourceFiles sources) (moduleCandidates bi m) of
       Just real -> Right (prettyShow m, SrcFile real, [])
       Nothing
-        | m `Set.member` providedModules sources -> Right (prettyShow m, SrcProvided, [])
+        | providedModule sources m -> Right (prettyShow m, SrcProvided, [])
         | otherwise ->
             Left $
               "cabal buck2: couldn't find a source file for module "
@@ -837,7 +878,7 @@ resolveMainIs sources bi mainIs =
 -- generator does no IO, so callers check which of these exist and pass those
 -- in.
 sourceCandidates :: PackageDescription -> [FilePath]
-sourceCandidates pkgDesc = ordNub (concatMap candidates (pkgBuildableComponents pkgDesc))
+sourceCandidates pkgDesc = ordNub (concatMap (\comp -> candidates comp ++ foreignSources (componentBuildInfo comp)) (pkgBuildableComponents pkgDesc))
   where
     candidates comp = case comp of
       CLib lib -> modules bi (exposedModules lib ++ otherModules bi)
@@ -853,6 +894,7 @@ sourceCandidates pkgDesc = ordNub (concatMap candidates (pkgBuildableComponents 
       where
         bi = componentBuildInfo comp
     modules bi = concatMap (\m -> let cs = moduleCandidates bi m in cs ++ concatMap bootCandidates cs)
+    foreignSources bi = map (normalise . getSymbolicPath) (cSources bi ++ cxxSources bi ++ cmmSources bi ++ asmSources bi)
     mainIs = mainIsCandidates
 
 sourceDirs :: BuildInfo -> [FilePath]

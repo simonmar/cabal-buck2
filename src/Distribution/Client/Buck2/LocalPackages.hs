@@ -210,6 +210,9 @@ data BuiltPackage = BuiltPackage
   -- ^ A package with @build-type: Custom@ that is built as if it didn't
   -- (see 'translateCustomSetups'): 'bpDescription' has the build type it is
   -- built as.
+  , bpPackageSet :: Maybe String
+  -- ^ The later stage that the package is of, if it is of one (see
+  -- "Distribution.Client.Buck2.LaterStage").
   }
 
 -- | For @--enable-custom-setup@: the plan, with each package that buck2
@@ -258,6 +261,7 @@ builtLocalPackages verbosity mode distDirLayout customSetups plan = do
             , bpDescription = elabPkgDescription elab
             , bpInProject = elabLocalToProject elab
             , bpCustomSetup = packageId elab `Set.member` customSetups
+            , bpPackageSet = Nothing
             }
       | elab <- builtLocalElabs mode plan
       ]
