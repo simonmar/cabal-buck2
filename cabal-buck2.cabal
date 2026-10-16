@@ -37,6 +37,7 @@ extra-source-files:
   test/fixtures/**/*.cabal
   test/fixtures/**/*.h
   test/fixtures/**/*.hs
+  test/fixtures/**/*.hs-boot
   test/fixtures/**/*.project
   test/fixtures/**/.buckconfig
   test/fixtures/**/.gitkeep
