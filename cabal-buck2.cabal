@@ -68,6 +68,7 @@ library
     Distribution.Client.Buck2.Fingerprint
     Distribution.Client.Buck2.Flags
     Distribution.Client.Buck2.Generate
+    Distribution.Client.Buck2.LaterStage
     Distribution.Client.Buck2.LocalPackages
     Distribution.Client.Buck2.Prebuilt
     Distribution.Client.Buck2.Schedule

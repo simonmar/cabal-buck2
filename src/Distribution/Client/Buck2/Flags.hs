@@ -21,10 +21,11 @@ data Buck2Flags = Buck2Flags
   , buck2NoCache :: Flag Bool
   , buck2SourceDeps :: Flag Bool
   , buck2CustomSetup :: Flag Bool
+  , buck2LaterStages :: [String]
   }
 
 defaultBuck2Flags :: Buck2Flags
-defaultBuck2Flags = Buck2Flags{buck2CacheAddress = mempty, buck2NoCache = mempty, buck2SourceDeps = mempty, buck2CustomSetup = mempty}
+defaultBuck2Flags = Buck2Flags{buck2CacheAddress = mempty, buck2NoCache = mempty, buck2SourceDeps = mempty, buck2CustomSetup = mempty, buck2LaterStages = []}
 
 buck2FlagOptions :: ShowOrParseArgs -> [OptionField Buck2Flags]
 buck2FlagOptions _ =
@@ -56,6 +57,13 @@ buck2FlagOptions _ =
       buck2CustomSetup
       (\v f -> f{buck2CustomSetup = v})
       trueArg
+  , option
+      []
+      ["later-stage"]
+      "Also configure the packages of PROJECT_FILE, for a later stage of a bootstrapped compiler: built by a compiler of version VERSION that this project builds. NAME names the stage in the generated files. Can be given more than once."
+      buck2LaterStages
+      (\v f -> f{buck2LaterStages = v})
+      (reqArg "NAME:VERSION:PROJECT_FILE" (succeedReadE (: [])) id)
   ]
 
 -- | How the dependencies are to be built.

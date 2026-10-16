@@ -36,6 +36,7 @@ module Distribution.Client.CmdBuck2
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import Distribution.Client.DistDirLayout (DistDirLayout (distProjectRootDirectory))
@@ -47,6 +48,7 @@ import Distribution.Client.NixStyleOptions
   )
 import Distribution.Client.ProjectConfig (ProjectConfig (..), ProjectConfigShared (..))
 import Distribution.Client.ProjectOrchestration
+import Distribution.Client.ProjectPlanning.Types (ElaboratedSharedConfig (pkgConfigCompiler, pkgConfigCompilerProgs, pkgConfigPlatform))
 import Distribution.Client.Targets (UserConstraint (..), UserConstraintScope (..))
 import Distribution.Solver.Types.ConstraintSource (ConstraintSource (ConstraintSourceUnknown))
 import Distribution.Solver.Types.PackageConstraint (PackageProperty (PackagePropertyVersion))
@@ -66,15 +68,18 @@ import Distribution.Client.Setup
 import Distribution.Simple.Command (CommandUI (..), usageAlternatives)
 import Distribution.Simple.Flag (fromFlagOrDefault, toFlag)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
+import Distribution.Package (packageName)
 import Distribution.Simple.Utils (cabalVersion, die', notice)
 import Distribution.Verbosity (normal)
 
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
 import Distribution.Client.Buck2.Cache (cacheSetting, configureCache)
 import Distribution.Client.Buck2.Configure (configureComponents)
-import Distribution.Client.Buck2.Flags (Buck2Flags (buck2CustomSetup), buck2FlagOptions, defaultBuck2Flags, dependencyMode)
+import Distribution.Client.Buck2.Flags (Buck2Flags (buck2CustomSetup, buck2LaterStages), buck2FlagOptions, defaultBuck2Flags, dependencyMode)
+import Distribution.Client.Buck2.LaterStage (configureLaterStage, parseLaterStage)
 import Distribution.Client.Buck2.LocalPackages
-  ( builtLocalPackages
+  ( BuiltPackage (..)
+  , builtLocalPackages
   , translateCustomSetups
   , localBuildTools
   , prebuiltUnits
@@ -173,7 +178,19 @@ buck2Action flags extraArgs globalFlags = do
 
       -- 'generatePrebuilt' already found and parsed every real @.conf@
       -- file of the resolved dependency closure.
-      componentLBIs <- configureComponents verbosity mode baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
+      projectLBIs <- configureComponents verbosity mode baseCtx buildCtx (PackageIndex.fromList resolvedDeps)
+
+      laterStages <- either (die' verbosity) return (traverse parseLaterStage (buck2LaterStages (extraFlags flags)))
+      let shared = elaboratedShared buildCtx
+      staged <- for laterStages $ configureLaterStage verbosity projectRoot (pkgConfigCompiler shared, pkgConfigPlatform shared, pkgConfigCompilerProgs shared)
+      let allPkgs = localPkgs ++ concatMap fst staged
+          componentLBIs = Map.unions (projectLBIs : map snd staged)
+          sets = [(pkgName, fromMaybe "the project" (bpPackageSet pkg)) | pkg <- allPkgs, let pkgName = packageName (bpDescription pkg)]
+          shared' = Map.filter ((> 1) . length) (Map.fromListWith (++) [(n, [s]) | (n, s) <- sets])
+      unless (Map.null shared') $
+        die' verbosity $
+          "cabal buck2: a package can't (yet) be in more than one stage: "
+            ++ intercalate ", " [prettyShow n ++ " (" ++ intercalate ", " ss ++ ")" | (n, ss) <- Map.toList shared']
 
       writeAllPackages
         verbosity
@@ -181,7 +198,7 @@ buck2Action flags extraArgs globalFlags = do
         componentLBIs
         externalBuildTools
         (projectTestOptions mode (elaboratedPlanOriginal buildCtx))
-        localPkgs
+        allPkgs
         (fromFlagOrDefault False (installKeepGoing (installFlags flags)))
 
       notice verbosity $

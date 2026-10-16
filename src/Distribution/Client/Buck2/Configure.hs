@@ -2,6 +2,7 @@
 -- source, to get the 'LocalBuildInfo'.
 module Distribution.Client.Buck2.Configure
   ( configureComponents
+  , libraryInstalledPackageInfo
   ) where
 
 import Distribution.Client.Compat.Prelude
