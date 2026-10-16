@@ -101,10 +101,19 @@ data SpecComponent = SpecComponent
   , scHscOptions :: [String]
   -- ^ Defines for the C compiler of @hsc2hs@, which say what the code is
   -- compiled for (GHC does this itself for Haskell code).
-  , scGeneratedIncludeDirs :: [FilePath]
-  -- ^ Directories, relative to the project root, with headers that the
-  -- package's @configure@ script generated (the build directory's version of
-  -- each relative 'scIncludeDirs').
+  , scGeneratedHeaderDirs :: [FilePath]
+  -- ^ Directories, relative to the project root, where the package's
+  -- @configure@ script may have generated headers (those that Cabal makes
+  -- include directories: the build directory, and its version of each
+  -- relative 'scIncludeDirs').
+  , scDeclaredHeaders :: [FilePath]
+  -- ^ The headers that the package says it has (@autogen-includes@,
+  -- @install-includes@, @includes@), which may be among those it generated.
+  , scGeneratedHeaders :: [(FilePath, FilePath)]
+  -- ^ The headers that the package's @configure@ script generated: where
+  -- each is (relative to the project root), and its path in an include
+  -- directory. Found by "Distribution.Client.Buck2.Write", from
+  -- 'scGeneratedHeaderDirs' and 'scDeclaredHeaders'.
   , scPkgconfig :: [String]
   }
 

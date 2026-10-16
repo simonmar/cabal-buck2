@@ -68,7 +68,6 @@ import Distribution.Client.Setup
 import Distribution.Simple.Command (CommandUI (..), usageAlternatives)
 import Distribution.Simple.Flag (fromFlagOrDefault, toFlag)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
-import Distribution.Package (packageName)
 import Distribution.Simple.Utils (cabalVersion, die', notice)
 import Distribution.Verbosity (normal)
 
@@ -76,10 +75,9 @@ import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
 import Distribution.Client.Buck2.Cache (cacheSetting, configureCache)
 import Distribution.Client.Buck2.Configure (configureComponents)
 import Distribution.Client.Buck2.Flags (Buck2Flags (buck2CustomSetup, buck2LaterStages), buck2FlagOptions, defaultBuck2Flags, dependencyMode)
-import Distribution.Client.Buck2.LaterStage (configureLaterStage, parseLaterStage)
+import Distribution.Client.Buck2.LaterStage (LaterStage (lsName), configureLaterStage, parseLaterStage)
 import Distribution.Client.Buck2.LocalPackages
-  ( BuiltPackage (..)
-  , builtLocalPackages
+  ( builtLocalPackages
   , translateCustomSetups
   , localBuildTools
   , prebuiltUnits
@@ -182,15 +180,11 @@ buck2Action flags extraArgs globalFlags = do
 
       laterStages <- either (die' verbosity) return (traverse parseLaterStage (buck2LaterStages (extraFlags flags)))
       let shared = elaboratedShared buildCtx
-      staged <- for laterStages $ configureLaterStage verbosity projectRoot (pkgConfigCompiler shared, pkgConfigPlatform shared, pkgConfigCompilerProgs shared)
+      staged <- for laterStages $ configureLaterStage verbosity projectRoot (fromFlagOrDefault False (buck2CustomSetup (extraFlags flags))) (pkgConfigCompiler shared, pkgConfigPlatform shared, pkgConfigCompilerProgs shared)
+      -- A package may be in more than one package set (the project's, and
+      -- each later stage's), configured for each separately.
       let allPkgs = localPkgs ++ concatMap fst staged
-          componentLBIs = Map.unions (projectLBIs : map snd staged)
-          sets = [(pkgName, fromMaybe "the project" (bpPackageSet pkg)) | pkg <- allPkgs, let pkgName = packageName (bpDescription pkg)]
-          shared' = Map.filter ((> 1) . length) (Map.fromListWith (++) [(n, [s]) | (n, s) <- sets])
-      unless (Map.null shared') $
-        die' verbosity $
-          "cabal buck2: a package can't (yet) be in more than one stage: "
-            ++ intercalate ", " [prettyShow n ++ " (" ++ intercalate ", " ss ++ ")" | (n, ss) <- Map.toList shared']
+          componentLBIs = Map.fromList ((Nothing, projectLBIs) : [(Just (lsName stage), lbis) | (stage, (_, lbis)) <- zip laterStages staged])
 
       writeAllPackages
         verbosity
