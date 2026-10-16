@@ -74,6 +74,8 @@ import Distribution.PackageDescription
   , includeDirs
   , libExposed
   , includes
+  , autogenIncludes
+  , installIncludes
   , otherModules
   , buildType
   , lookupComponent
@@ -383,7 +385,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
                   { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
                   , scReexports = reexports
                   , scExposed = libExposed lib
-                  , scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi
+                  , scGeneratedHeaderDirs = generatedHeaderDirs projectRoot pkgDesc lbi bi, scDeclaredHeaders = declaredHeaders bi
                   , scHscOptions = platformDefines lbi
                   }
                 (macrosHeader targetName pkgDesc lbi clbi : srcAutogen ++ map snd extra)
@@ -395,7 +397,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
     -- arguments.
     executableLike kind targetName lbi clbi bi mainSrc otherSrcs testArgs srcAutogen =
       componentTargets
-        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs, scGeneratedIncludeDirs = generatedIncludeDirs projectRoot pkgDesc lbi bi, scHscOptions = platformDefines lbi}
+        (specComponent localIndex externalBuildTools kind targetName bi){scMainIs = Just mainSrc, scSrcs = otherSrcs, scTestArgs = testArgs, scGeneratedHeaderDirs = generatedHeaderDirs projectRoot pkgDesc lbi bi, scDeclaredHeaders = declaredHeaders bi, scHscOptions = platformDefines lbi}
         (macrosHeader targetName pkgDesc lbi clbi : srcAutogen)
 
     -- The shape shared by an executable, an @exitcode-stdio-1.0@
@@ -507,11 +509,11 @@ emptyModule ghcVersion targetName =
     }
 
 -- | Where a @configure@ script (for a package with the @Configure@ build type)
--- put the headers it generated: in the build directory, and in a directory
--- like each of the package's relative @include-dirs@ there. Cabal makes all
+-- put the headers it generated: in the build directory, or in a directory
+-- like one of the package's relative @include-dirs@ there. Cabal makes all
 -- of them include directories of the package's C.
-generatedIncludeDirs :: FilePath -> PackageDescription -> LocalBuildInfo -> BuildInfo -> [FilePath]
-generatedIncludeDirs projectRoot pkgDesc lbi bi
+generatedHeaderDirs :: FilePath -> PackageDescription -> LocalBuildInfo -> BuildInfo -> [FilePath]
+generatedHeaderDirs projectRoot pkgDesc lbi bi
   | buildType pkgDesc == Configure =
       ordNub . map (dropTrailingPathSeparator . normalise) $
         build
@@ -523,6 +525,11 @@ generatedIncludeDirs projectRoot pkgDesc lbi bi
   | otherwise = []
   where
     build = makeRelative projectRoot (getSymbolicPath (buildDir lbi))
+
+-- | The headers that a component says it has: generated ones among them
+-- should be @autogen-includes@ (which @sdist@ leaves out).
+declaredHeaders :: BuildInfo -> [FilePath]
+declaredHeaders bi = ordNub (map getSymbolicPath (autogenIncludes bi) ++ map getSymbolicPath (installIncludes bi) ++ map getSymbolicPath (includes bi))
 
 -- | A package's build spec.
 packageSpec :: PackageDescription -> [String] -> [SpecComponent] -> BuildSpec
@@ -573,7 +580,9 @@ specComponent localIndex externalBuildTools kind name bi =
     , scIncludes = map getSymbolicPath (includes bi)
     , scExposed = True
     , scHscOptions = []
-    , scGeneratedIncludeDirs = []
+    , scGeneratedHeaderDirs = []
+    , scDeclaredHeaders = []
+    , scGeneratedHeaders = []
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
     }
   where

@@ -13,6 +13,8 @@ module Distribution.Client.Buck2.LocalPackages
   , BuiltPackage (..)
   , builtLocalPackages
   , translateCustomSetups
+  , customSetupBuildType
+  , warnCustomSetup
   , rootRelativeDir
   , nonLibraryTargetName
   , ToolTarget (..)
@@ -224,13 +226,7 @@ translateCustomSetups :: Verbosity -> DependencyMode -> DistDirLayout -> Elabora
 translateCustomSetups verbosity mode distDirLayout plan = do
   pkgs <- traverse translate (InstallPlan.toList plan)
   let translated = Map.fromList (mapMaybe snd pkgs)
-  for_ (Map.toList translated) $ \(pkgId, buildType) ->
-    warn verbosity $
-      "cabal buck2: building "
-        ++ prettyShow pkgId
-        ++ " as if it had build-type: "
-        ++ prettyShow buildType
-        ++ " (--enable-custom-setup), so its Setup.hs isn't run"
+  for_ (Map.toList translated) $ uncurry (warnCustomSetup verbosity)
   return (InstallPlan.new (InstallPlan.planIndepGoals plan) (Graph.fromDistinctList (map fst pkgs)), Map.keysSet translated)
   where
     translate pkg = case pkg of
@@ -238,12 +234,27 @@ translateCustomSetups verbosity mode distDirLayout plan = do
         | isBuiltLocally mode elab
         , PD.buildType desc == PD.Custom -> do
             dir <- packageSourceDir verbosity distDirLayout elab
-            hasConfigure <- doesFileExist (dir </> "configure")
-            let buildType = if hasConfigure then PD.Configure else PD.Simple
+            buildType <- customSetupBuildType dir
             return (InstallPlan.Configured elab{elabPkgDescription = desc{PD.buildTypeRaw = Just buildType}}, Just (packageId elab, buildType))
         where
           desc = elabPkgDescription elab
       _ -> return (pkg, Nothing)
+
+-- | The build type that a package with @build-type: Custom@ in a directory is
+-- built as, with @--enable-custom-setup@: see 'translateCustomSetups'.
+customSetupBuildType :: FilePath -> IO PD.BuildType
+customSetupBuildType dir = do
+  hasConfigure <- doesFileExist (dir </> "configure")
+  return (if hasConfigure then PD.Configure else PD.Simple)
+
+warnCustomSetup :: Verbosity -> PackageId -> PD.BuildType -> IO ()
+warnCustomSetup verbosity pkgId buildType =
+  warn verbosity $
+    "cabal buck2: building "
+      ++ prettyShow pkgId
+      ++ " as if it had build-type: "
+      ++ prettyShow buildType
+      ++ " (--enable-custom-setup), so its Setup.hs isn't run"
 
 -- | Every package buck2 builds from source. Per-component elaboration gives
 -- each such package one 'ElaboratedConfiguredPackage' per component, all
