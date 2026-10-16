@@ -132,10 +132,15 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
             ++ " depends on packages that aren't in it: "
             ++ intercalate ", " [prettyShow (depPkgName d) | MissingDependency d _ <- missing]
       Right (pd, fa') -> return (dir, cabalFile, gpd, pd, fa')
-  let graph = Graph.fromDistinctList [Graph.N p (packageName pd) (libraryDeps pd) | p@(_, _, _, pd, _) <- finalized]
+  let graph = Graph.fromDistinctList [Graph.N p (packageName pd) (packageDeps pd) | p@(_, _, _, pd, _) <- finalized]
   ordered <- case Graph.revTopSort graph of
     sorted | null (Graph.cycles graph) -> return [p | Graph.N p _ _ <- sorted]
-    _ -> die' verbosity ("cabal buck2: the packages of stage " ++ lsName stage ++ " depend on each other in a cycle")
+    _ ->
+      die' verbosity $
+        "cabal buck2: the packages of stage "
+          ++ lsName stage
+          ++ " depend on each other in a cycle: "
+          ++ intercalate "; " [intercalate ", " [prettyShow name | Graph.N _ name _ <- cyc] | cyc <- Graph.cycles graph]
   (_, lbis) <- foldM configureOne (mempty, Map.empty) ordered
   return
     ( [ BuiltPackage{bpDir = dir, bpDescription = pd, bpInProject = True, bpCustomSetup = packageName pd `Set.member` customSetups, bpPackageSet = Just (lsName stage)}
@@ -146,10 +151,13 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
   where
     comp = laterCompiler comp0 (lsCompilerVersion stage)
 
-    libraryDeps pd =
+    -- The packages that the package's libraries and programs depend on (not
+    -- its test-suites or benchmarks, which aren't built).
+    packageDeps pd =
       ordNub
         [ depPkgName d
-        | bi <- map PD.libBuildInfo (PD.allLibraries pd)
+        | bi <- map PD.libBuildInfo (PD.allLibraries pd) ++ map PD.buildInfo (PD.executables pd)
+        , PD.buildable bi
         , d <- PD.targetBuildDepends bi
         , depPkgName d /= packageName pd
         ]
@@ -161,7 +169,7 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
           deps =
             [ GivenComponent (packageName dep) LMainLibName (mkComponentId (prettyShow (packageId dep) ++ "-inplace"))
             | dep <- PackageIndex.allPackages index
-            , packageName dep `elem` libraryDeps pd
+            , packageName dep `elem` packageDeps pd
             ]
           common =
             (setupHsCommonFlags verbosity (Just (makeSymbolicPath dir)) (makeSymbolicPath distDir) [] False)
