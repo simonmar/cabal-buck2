@@ -120,8 +120,9 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
 --
 -- It also passes on the project's own customisation of the generated
 -- targets: the @OVERRIDES@ of a @cabal-buck2.bzl@ in the project root, if
--- there is one, and if there are later stages, its @PACKAGE_SET_MODIFIERS@
--- and @PACKAGE_SET_TRANSITIONS@ (see @buck2\/cabal.bzl@).
+-- there is one, and if there are later stages, its @PACKAGE_SET_MODIFIERS@,
+-- @PACKAGE_SET_TRANSITIONS@ and @PROJECT_PACKAGE_SET@ (the name of the
+-- project's own package set; see @buck2\/cabal.bzl@).
 writePackagesFile :: Verbosity -> FilePath -> [BuiltPackage] -> IO ()
 writePackagesFile verbosity projectRoot pkgs = do
   createDirectoryIfMissing True (takeDirectory path)
@@ -145,10 +146,12 @@ writePackagesFile verbosity projectRoot pkgs = do
             ++ ["load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" | hasOverrides]
             ++ ["load(\"//:cabal-buck2.bzl\", _PACKAGE_SET_MODIFIERS = \"PACKAGE_SET_MODIFIERS\")" | hasOverrides, hasLaterStages]
             ++ ["load(\"//:cabal-buck2.bzl\", _PACKAGE_SET_TRANSITIONS = \"PACKAGE_SET_TRANSITIONS\")" | hasOverrides, hasLaterStages]
+            ++ ["load(\"//:cabal-buck2.bzl\", _PROJECT_PACKAGE_SET = \"PROJECT_PACKAGE_SET\")" | hasOverrides, hasLaterStages]
             ++ [ ""
                , "OVERRIDES = " ++ (if hasOverrides then "_OVERRIDES" else "{}")
                , "PACKAGE_SET_MODIFIERS = " ++ (if hasOverrides && hasLaterStages then "_PACKAGE_SET_MODIFIERS" else "{}")
                , "PACKAGE_SET_TRANSITIONS = " ++ (if hasOverrides && hasLaterStages then "_PACKAGE_SET_TRANSITIONS" else "{}")
+               , "PROJECT_PACKAGE_SET = " ++ (if hasOverrides && hasLaterStages then "_PROJECT_PACKAGE_SET" else "None")
                , ""
                ]
         )
