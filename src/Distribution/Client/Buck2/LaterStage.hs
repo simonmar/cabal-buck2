@@ -31,7 +31,7 @@ import Distribution.Client.ProjectConfig.Types (MapMappend (getMapMappend))
 import Distribution.Client.ProjectPlanning (setupHsCommonFlags)
 import qualified Distribution.Deprecated.ParseUtils as ParseUtils
 import Distribution.Compiler (AbiTag (NoAbiTag), CompilerFlavor (GHC), CompilerId (..))
-import Distribution.Package (PackageName, packageId, packageName)
+import Distribution.Package (PackageName, packageId, packageName, packageVersion)
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Configuration (finalizePD)
 import Distribution.Simple (autoconfSetupHooks)
@@ -60,11 +60,11 @@ import qualified Distribution.Types.LocalBuildConfig as LBC
 import Distribution.Types.LocalBuildInfo (LocalBuildInfo)
 import Distribution.Utils.Path (makeSymbolicPath, relativeSymbolicPath)
 import Distribution.Verbosity (defaultVerbosityHandles)
-import Distribution.Version (Version)
+import Distribution.Version (Version, withinRange)
 import Language.Haskell.Extension (Extension (..), KnownExtension, knownLanguages)
 
 import Distribution.Client.Buck2.Configure (libraryInstalledPackageInfo)
-import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..))
+import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), customSetupBuildType, warnCustomSetup)
 
 -- | A later stage, from @--later-stage=NAME:VERSION:PROJECT_FILE@.
 data LaterStage = LaterStage
@@ -93,20 +93,35 @@ configureLaterStage
   :: Verbosity
   -> FilePath
   -- ^ The project root.
+  -> Bool
+  -- ^ @--enable-custom-setup@: see 'translateCustomSetups'.
   -> (Compiler, Platform, ProgramDb)
   -> LaterStage
   -> IO ([BuiltPackage], Map (PackageName, ComponentName) LocalBuildInfo)
-configureLaterStage verbosity projectRoot (comp0, platform, progDb) stage = do
+configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) stage = do
   (dirs, flags) <- readStageProject verbosity (projectRoot </> lsProjectFile stage)
   pkgs <- for dirs $ \dir0 -> do
     dir <- makeAbsolute (projectRoot </> dir0)
     cabalFile <- relativeSymbolicPath <$> tryFindPackageDesc verbosity (Just (makeSymbolicPath dir))
-    gpd <- readGenericPackageDescription verbosity (Just (makeSymbolicPath dir)) cabalFile
-    return (dir, cabalFile, gpd)
-  let names = Set.fromList [packageName gpd | (_, _, gpd) <- pkgs]
-  finalized <- for pkgs $ \(dir, cabalFile, gpd) -> do
+    gpd0 <- readGenericPackageDescription verbosity (Just (makeSymbolicPath dir)) cabalFile
+    let desc = PD.packageDescription gpd0
+    gpd <-
+      if customSetup && PD.buildType desc == PD.Custom
+        then do
+          buildType <- customSetupBuildType dir
+          warnCustomSetup verbosity (PD.package desc) buildType
+          return gpd0{PD.packageDescription = desc{PD.buildTypeRaw = Just buildType}}
+        else return gpd0
+    return (dir, cabalFile, gpd, PD.buildType desc == PD.Custom)
+  let versions = Map.fromList [(packageName gpd, packageVersion gpd) | (_, _, gpd, _) <- pkgs]
+      customSetups = Set.fromList [packageName gpd | (_, _, gpd, custom) <- pkgs, custom, customSetup]
+  finalized <- for pkgs $ \(dir, cabalFile, gpd, _) -> do
     let fa = Map.findWithDefault mempty (packageName gpd) flags
-        available d = if depPkgName d `Set.member` names then Satisfied else Unsatisfied MissingPackage
+        -- What a dependency is satisfied by is the stage's package of its
+        -- name, which an automatic flag can choose the version of.
+        available d = case Map.lookup (depPkgName d) versions of
+          Just v | withinRange v (PD.depVerRange d) -> Satisfied
+          _ -> Unsatisfied MissingPackage
     case finalizePD fa (ComponentRequestedSpec False False) available platform (compilerInfo comp) [] gpd of
       Left missing ->
         die' verbosity $
@@ -123,7 +138,7 @@ configureLaterStage verbosity projectRoot (comp0, platform, progDb) stage = do
     _ -> die' verbosity ("cabal buck2: the packages of stage " ++ lsName stage ++ " depend on each other in a cycle")
   (_, lbis) <- foldM configureOne (mempty, Map.empty) ordered
   return
-    ( [ BuiltPackage{bpDir = dir, bpDescription = pd, bpInProject = True, bpCustomSetup = False, bpPackageSet = Just (lsName stage)}
+    ( [ BuiltPackage{bpDir = dir, bpDescription = pd, bpInProject = True, bpCustomSetup = packageName pd `Set.member` customSetups, bpPackageSet = Just (lsName stage)}
       | (dir, _, _, pd, _) <- ordered
       ]
     , lbis
