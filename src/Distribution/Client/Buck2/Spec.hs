@@ -95,6 +95,8 @@ data SpecComponent = SpecComponent
   , scAsmSources :: [FilePath]
   , scAsmOptions :: [String]
   , scIncludeDirs :: [FilePath]
+  , scExposed :: Bool
+  -- ^ Of a library: whether its package is exposed (Cabal's @exposed@).
   , scIncludes :: [FilePath]
   -- ^ The headers that what is compiled against the library includes
   -- (Cabal's @includes@).

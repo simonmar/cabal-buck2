@@ -16,6 +16,7 @@ import qualified Data.Set as Set
 import Distribution.Package (packageName)
 import Distribution.PackageDescription
   ( libName
+  , library
   , pkgBuildableComponents
   )
 import Distribution.Simple.InstallDirs (PathTemplate)
@@ -136,8 +137,9 @@ writePackagesFile verbosity projectRoot pkgs = do
           , "# adding or removing cabal-buck2.bzl."
           , "#"
           , "# The directory of each package that this project builds, from the root of"
-          , "# the project (PACKAGES, and for each later stage, PACKAGE_SETS), and the"
-          , "# project's overrides of the generated targets. See buck2/cabal.bzl."
+          , "# the project (PACKAGES, and for each later stage, PACKAGE_SETS), those that"
+          , "# have a library (LIBRARIES, PACKAGE_SET_LIBRARIES), and the project's"
+          , "# overrides of the generated targets. See buck2/cabal.bzl."
           , ""
           ]
             ++ ["load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" | hasOverrides]
@@ -153,7 +155,20 @@ writePackagesFile verbosity projectRoot pkgs = do
         ++ renderBinding "PACKAGES" (VDict (Map.toList (packagesOf Nothing)))
         ++ "\n"
         ++ renderBinding "PACKAGE_SETS" (VDict [(s, VDict (Map.toList (packagesOf (Just s)))) | s <- ordNub (mapMaybe bpPackageSet pkgs)])
+        ++ "\n"
+        ++ renderBinding "LIBRARIES" (strList (librariesOf Nothing))
+        ++ "\n"
+        ++ renderBinding "PACKAGE_SET_LIBRARIES" (VDict [(s, strList (librariesOf (Just s))) | s <- ordNub (mapMaybe bpPackageSet pkgs)])
     hasLaterStages = any (isJust . bpPackageSet) pkgs
+    -- The packages that have a (main) library, whose target is named after
+    -- the package.
+    librariesOf set =
+      ordNub
+        [ prettyShow (packageName (bpDescription pkg))
+        | pkg <- pkgs
+        , bpPackageSet pkg == set
+        , isJust (library (bpDescription pkg))
+        ]
     packagesOf set =
       Map.fromList
         [ (prettyShow (packageName (bpDescription pkg)), str (rootRelativeDir projectRoot (bpDir pkg)))
@@ -387,6 +402,7 @@ componentValue c =
       ++ listField "asm_options" (scAsmOptions c)
       ++ listField "include_dirs" (scIncludeDirs c)
       ++ listField "includes" (scIncludes c)
+      ++ [("exposed", VBool False) | not (scExposed c)]
       ++ listField "hsc_options" (scHscOptions c)
       ++ [("generated_headers", str (generatedHeadersTarget c)) | not (null (scGeneratedHeaders c))]
       ++ [("generated_include_dir", str (generatedIncludeDirTarget c)) | not (null (scGeneratedHeaders c))]

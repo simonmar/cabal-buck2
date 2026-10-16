@@ -72,6 +72,7 @@ import Distribution.PackageDescription
   , hcOptions
   , hsSourceDirs
   , includeDirs
+  , libExposed
   , includes
   , autogenIncludes
   , installIncludes
@@ -383,6 +384,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
                 (specComponent localIndex externalBuildTools Library targetName bi)
                   { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
                   , scReexports = reexports
+                  , scExposed = libExposed lib
                   , scGeneratedHeaderDirs = generatedHeaderDirs projectRoot pkgDesc lbi bi, scDeclaredHeaders = declaredHeaders bi
                   , scHscOptions = platformDefines lbi
                   }
@@ -576,6 +578,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
     , scIncludes = map getSymbolicPath (includes bi)
+    , scExposed = True
     , scHscOptions = []
     , scGeneratedHeaderDirs = []
     , scDeclaredHeaders = []
