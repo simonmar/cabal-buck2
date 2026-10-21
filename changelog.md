@@ -1,6 +1,22 @@
 # 0.5.0.0
 
   * For `cabal-install` version 3.18
+  * A component's C, C++, assembler and Cmm sources are part of its
+    library, as in Cabal: their objects are in the library's archive
+    and shared library, rather than in libraries of their own linked
+    alongside it. A library with no Haskell modules (only C sources,
+    say) no longer gets a placeholder module.
+  * A library that isn't exposed (`exposed: False`) is registered as
+    such, and one whose `ghc-options` give it a unit id
+    (`-this-unit-id`) has that unit id.
+  * `-m static` and `-m shared` say how executables are linked,
+    independently of the build mode (whose default is shared for dev,
+    static for opt and prof).
+  * `haskell_library` has a `soname` attribute, for a shared library
+    whose soname isn't its file's name.
+  * Configurations can be named by a project's own constraints too:
+    `named_constraint_settings` in the `[cfg]` section of its
+    `.buckconfig`.
 
 # 0.4.0.0
 
