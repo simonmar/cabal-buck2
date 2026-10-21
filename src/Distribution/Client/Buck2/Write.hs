@@ -16,6 +16,7 @@ import qualified Data.Set as Set
 import Distribution.Package (packageName)
 import Distribution.PackageDescription
   ( libName
+  , library
   , pkgBuildableComponents
   )
 import Distribution.Simple.InstallDirs (PathTemplate)
@@ -145,9 +146,10 @@ writePackagesFile verbosity projectRoot pkgs = do
           , "# PACKAGE_SET_TRANSITIONS)."
           , "#"
           , "# The directory of each package that this project builds, from the root of"
-          , "# the project (PACKAGES, and for each later stage, PACKAGE_SETS), the"
-          , "# packages whose data files each one needs, and the project's overrides"
-          , "# and defaults for the generated targets. See buck2/cabal.bzl."
+          , "# the project (PACKAGES, and for each later stage, PACKAGE_SETS), those that"
+          , "# have a library (LIBRARIES, PACKAGE_SET_LIBRARIES), the packages whose data"
+          , "# files each one needs, and the project's overrides and defaults for the"
+          , "# generated targets. See buck2/cabal.bzl."
           , ""
           ]
             ++ [ "load(\"//:cabal-buck2.bzl\", " ++ intercalate ", " ["_" ++ name ++ " = \"" ++ name ++ "\"" | name <- defined] ++ ")"
@@ -161,7 +163,20 @@ writePackagesFile verbosity projectRoot pkgs = do
         ++ "\n"
         ++ renderBinding "PACKAGE_SETS" (VDict [(s, VDict (Map.toList (packagesOf (Just s)))) | s <- ordNub (mapMaybe bpPackageSet pkgs)])
         ++ "\n"
+        ++ renderBinding "LIBRARIES" (strList (librariesOf Nothing))
+        ++ "\n"
+        ++ renderBinding "PACKAGE_SET_LIBRARIES" (VDict [(s, strList (librariesOf (Just s))) | s <- ordNub (mapMaybe bpPackageSet pkgs)])
+        ++ "\n"
         ++ renderBinding "DATA_PACKAGES" (VDict (Map.toList (strList <$> packagesWithData pkgs)))
+    -- The packages that have a (main) library, whose target is named after
+    -- the package.
+    librariesOf set =
+      ordNub
+        [ prettyShow (packageName (bpDescription pkg))
+        | pkg <- pkgs
+        , bpPackageSet pkg == set
+        , isJust (library (bpDescription pkg))
+        ]
     packagesOf set =
       Map.fromList
         [ (prettyShow (packageName (bpDescription pkg)), str (rootRelativeDir projectRoot (bpDir pkg)))
