@@ -7,8 +7,8 @@
 -- compiles the code).
 --
 -- Nothing is solved or built beforehand: the packages of a stage are those of
--- its project file, with the flags given there, and they may depend only on
--- each other.
+-- its project file (and its @.local@ file), with the flags given there, and
+-- they may depend only on each other.
 module Distribution.Client.Buck2.LaterStage
   ( LaterStage (..)
   , parseLaterStage
@@ -240,18 +240,25 @@ laterCompiler comp version =
     , compilerWiredInUnitIds = Nothing
     }
 
--- | The package directories and flags of a stage's project file.
+-- | The package directories and flags of a stage's project file, and of its
+-- @.local@ file (as for @cabal --project-file@), whose flags win.
 readStageProject :: Verbosity -> FilePath -> IO ([FilePath], Map PackageName FlagAssignment)
 readStageProject verbosity file = do
   exists <- doesFileExist file
   unless exists $ die' verbosity ("cabal buck2: no project file " ++ file)
+  config <- readProjectConfig verbosity file
+  let localFile = file ++ ".local"
+  hasLocal <- doesFileExist localFile
+  localConfig <- if hasLocal then readProjectConfig verbosity localFile else return mempty
+  notice verbosity ("cabal buck2: configuring the packages of " ++ file ++ (if hasLocal then " (and " ++ localFile ++ ")" else ""))
+  return
+    ( projectPackages config ++ projectPackages localConfig
+    , Map.map packageConfigFlagAssignment (getMapMappend (projectConfigSpecificPackage (config <> localConfig)))
+    )
+
+readProjectConfig :: Verbosity -> FilePath -> IO ProjectConfig
+readProjectConfig verbosity file = do
   contents <- BS.readFile file
   case parseLegacyProjectConfig file contents of
     ParseUtils.ParseFailed err -> die' verbosity ("cabal buck2: " ++ file ++ ": " ++ show err)
-    ParseUtils.ParseOk _ legacy -> do
-      let config = convertLegacyProjectConfig legacy
-      notice verbosity ("cabal buck2: configuring the packages of " ++ file)
-      return
-        ( projectPackages config
-        , Map.map packageConfigFlagAssignment (getMapMappend (projectConfigSpecificPackage config))
-        )
+    ParseUtils.ParseOk _ legacy -> return (convertLegacyProjectConfig legacy)
