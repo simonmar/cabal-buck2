@@ -86,6 +86,9 @@ data SpecComponent = SpecComponent
   , scReexports :: [SpecReexport]
   -- ^ Modules a library re-exports from the library of another package (or
   -- another library of its own).
+  , scHiddenModules :: [String]
+  -- ^ Of a library: the modules that its package doesn't expose (Cabal's
+  -- @other-modules@).
   , scBuildTools :: [SpecBuildTool]
   , scCSources :: [FilePath]
   , scCcOptions :: [String]

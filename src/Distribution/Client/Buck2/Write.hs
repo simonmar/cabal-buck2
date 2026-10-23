@@ -402,6 +402,7 @@ componentValue c =
       ++ listField "ld_options" (scLdOptions c)
       ++ valuesField "deps" (map depValue (scDeps c))
       ++ valuesField "reexports" (map reexportValue (scReexports c))
+      ++ listField "hidden_modules" (scHiddenModules c)
       ++ valuesField "build_tools" (map buildToolValue (scBuildTools c))
       ++ listField "c_sources" (scCSources c)
       ++ listField "cc_options" (scCcOptions c)

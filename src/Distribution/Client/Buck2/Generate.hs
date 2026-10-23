@@ -384,6 +384,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
                 (specComponent localIndex externalBuildTools Library targetName bi)
                   { scSrcs = srcs ++ [(prettyShow m, SrcAutogen (autogenName f)) | (m, f) <- extra]
                   , scReexports = reexports
+                  , scHiddenModules = map prettyShow (otherModules bi)
                   , scExposed = libExposed lib
                   , scGeneratedHeaderDirs = generatedHeaderDirs projectRoot pkgDesc lbi bi, scDeclaredHeaders = declaredHeaders bi
                   , scHscOptions = platformDefines lbi
@@ -568,6 +569,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scExtraLibDirs = map getSymbolicPath (extraLibDirs bi)
     , scDeps = map specDep (libraryDeps bi)
     , scReexports = []
+    , scHiddenModules = []
     , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
