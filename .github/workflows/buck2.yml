@@ -7,6 +7,10 @@ name: buck2
 # each build mode of buck2 (dev, opt and prof). The buck2 side (buck2/) is the haskell-buck2 submodule, which has
 # to be at the commit for this release of cabal-buck2: cabal-buck2 checks that
 # buck2/version.bzl says the release it is.
+#
+# On Linux and macOS (Apple silicon); --source-deps only on Linux, since it
+# builds much more and doesn't test anything platform-specific that the store
+# mode doesn't.
 
 # See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
 concurrency:
@@ -27,8 +31,8 @@ env:
 
 jobs:
   buck2:
-    name: cabal buck2${{ matrix.args }}
-    runs-on: ubuntu-latest
+    name: cabal buck2${{ matrix.args }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,11 +40,16 @@ jobs:
           # The dependencies are built by cabal, into its store.
           - mode: store
             args: ""
+            os: ubuntu-latest
+          - mode: store
+            args: ""
+            os: macos-latest
           # The dependencies are built from source by buck2 as well, so that
           # the cabal store isn't used for them at all. This builds a lot
           # more with buck2 (cabal-install and everything it depends on).
           - mode: source-deps
             args: " --source-deps"
+            os: ubuntu-latest
     defaults:
       run:
         shell: bash
@@ -58,8 +67,13 @@ jobs:
 
       - name: Install buck2
         run: |
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=x86_64-unknown-linux-gnu ;;
+            macOS-ARM64) target=aarch64-apple-darwin ;;
+            *) echo "no buck2 release for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          esac
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/facebook/buck2/releases/download/${BUCK2_VERSION}/buck2-x86_64-unknown-linux-gnu.zst" \
+          curl -fsSL "https://github.com/facebook/buck2/releases/download/${BUCK2_VERSION}/buck2-${target}.zst" \
             | zstd -d > "$HOME/.local/bin/buck2"
           chmod +x "$HOME/.local/bin/buck2"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -129,8 +143,12 @@ jobs:
         run: buck2 test //...
 
   example:
-    name: example
-    runs-on: ubuntu-latest
+    name: example (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     defaults:
       run:
         shell: bash
@@ -147,8 +165,13 @@ jobs:
 
       - name: Install buck2
         run: |
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=x86_64-unknown-linux-gnu ;;
+            macOS-ARM64) target=aarch64-apple-darwin ;;
+            *) echo "no buck2 release for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          esac
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/facebook/buck2/releases/download/${BUCK2_VERSION}/buck2-x86_64-unknown-linux-gnu.zst" \
+          curl -fsSL "https://github.com/facebook/buck2/releases/download/${BUCK2_VERSION}/buck2-${target}.zst" \
             | zstd -d > "$HOME/.local/bin/buck2"
           chmod +x "$HOME/.local/bin/buck2"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
