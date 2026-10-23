@@ -59,6 +59,18 @@ jobs:
           # The buck2 prelude and support code (buck2/).
           submodules: true
 
+      # The image's Command Line Tools can be newer than its default Xcode
+      # (macos-26: CLT 27 with the macOS 27 SDK, Xcode 26.6), and the compiler
+      # then uses the CLT's SDK, whose .tbd stubs Xcode's ld can't read
+      # ("unknown architecture arm64e.x1"). Use the default Xcode and its SDK
+      # throughout.
+      - name: Use the default Xcode and its SDK
+        if: runner.os == 'macOS'
+        run: |
+          developer_dir=/Applications/Xcode.app/Contents/Developer
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(DEVELOPER_DIR=$developer_dir xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+
       - name: Install GHC and cabal
         uses: haskell-actions/setup@v2
         with:
@@ -83,6 +95,7 @@ jobs:
           ghc --version
           cabal --version
           buck2 --version
+          if [ "$RUNNER_OS" = macOS ]; then xcode-select -p; echo "SDKROOT=$SDKROOT"; ld -v; fi
           # The buck2 toolchain looks the compiler up by versioned name.
           ghc-${GHC_VERSION} --version
           ghc-pkg-${GHC_VERSION} --version
@@ -157,6 +170,18 @@ jobs:
         with:
           submodules: true
 
+      # The image's Command Line Tools can be newer than its default Xcode
+      # (macos-26: CLT 27 with the macOS 27 SDK, Xcode 26.6), and the compiler
+      # then uses the CLT's SDK, whose .tbd stubs Xcode's ld can't read
+      # ("unknown architecture arm64e.x1"). Use the default Xcode and its SDK
+      # throughout.
+      - name: Use the default Xcode and its SDK
+        if: runner.os == 'macOS'
+        run: |
+          developer_dir=/Applications/Xcode.app/Contents/Developer
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(DEVELOPER_DIR=$developer_dir xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+
       - name: Install GHC and cabal
         uses: haskell-actions/setup@v2
         with:
@@ -181,6 +206,7 @@ jobs:
           ghc --version
           cabal --version
           buck2 --version
+          if [ "$RUNNER_OS" = macOS ]; then xcode-select -p; echo "SDKROOT=$SDKROOT"; ld -v; fi
           ghc-${GHC_VERSION} --version
           ghc-pkg-${GHC_VERSION} --version
 
