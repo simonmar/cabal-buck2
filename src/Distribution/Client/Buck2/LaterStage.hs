@@ -39,7 +39,9 @@ import Distribution.Simple.Compiler (Compiler (..), DebugInfoLevel (NoDebugInfo)
 import qualified Distribution.Simple.Configure as Cabal
 import Distribution.Simple.PackageDescription (readGenericPackageDescription)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
-import Distribution.Simple.Program.Db (ProgramDb)
+import Distribution.Simple.Program.Builtin (ghcPkgProgram, ghcProgram, runghcProgram)
+import Distribution.Simple.Program.Db (ProgramDb, lookupProgram, updateProgram)
+import Distribution.Simple.Program.Types (ConfiguredProgram (..))
 import qualified Distribution.Simple.Setup as Cabal
 import Distribution.Simple.SetupHooks.Internal (ConfigureHooks (preConfPackageHook), SetupHooks (configureHooks), noSetupHooks)
 import Distribution.Simple.Utils (die', notice, ordNub, tryFindPackageDesc)
@@ -150,6 +152,7 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
     )
   where
     comp = laterCompiler comp0 (lsCompilerVersion stage)
+    progDb' = laterPrograms progDb (lsCompilerVersion stage)
 
     -- The packages that the package's libraries and programs depend on (not
     -- its test-suites or benchmarks, which aren't built).
@@ -176,7 +179,7 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
               { Cabal.setupCabalFilePath = Cabal.toFlag cabalFile
               }
           cfg =
-            (Cabal.defaultConfigFlags progDb)
+            (Cabal.defaultConfigFlags progDb')
               { Cabal.configCommonFlags = common
               , Cabal.configIPID = Cabal.toFlag unitId
               , Cabal.configDependencies = deps
@@ -188,7 +191,7 @@ configureLaterStage verbosity projectRoot customSetup (comp0, platform, progDb) 
           hooks = configureHooks $ case PD.buildType pd of
             PD.Configure -> autoconfSetupHooks
             _ -> noSetupHooks
-          lbc0 = LBC.LocalBuildConfig{LBC.extraConfigArgs = [], LBC.withPrograms = progDb, LBC.withBuildOptions = buildOptions}
+          lbc0 = LBC.LocalBuildConfig{LBC.extraConfigArgs = [], LBC.withPrograms = progDb', LBC.withBuildOptions = buildOptions}
       createDirectoryIfMissing True distDir
       lbc <- maybe (return lbc0) (Cabal.runPreConfPackageHook cfg comp platform lbc0) (preConfPackageHook hooks)
       (_, pkgInfo) <- Cabal.computePackageInfoFromIndex defaultVerbosityHandles cfg gpd index
@@ -239,6 +242,14 @@ laterCompiler comp version =
     , compilerProperties = Map.insert "Project version" (prettyShow version) (Map.delete "Project Unit Id" (Map.delete "ghc-internal Unit Id" (compilerProperties comp)))
     , compilerWiredInUnitIds = Nothing
     }
+
+-- | The programs of a later stage: those of the stand-in compiler, with the
+-- version of the later one for the programs that come with it (as the
+-- package's @TOOL_VERSION_ghc@, say, has it).
+laterPrograms :: ProgramDb -> Version -> ProgramDb
+laterPrograms progDb version = foldr update progDb [ghcProgram, ghcPkgProgram, runghcProgram]
+  where
+    update prog db = maybe db (\p -> updateProgram p{programVersion = Just version} db) (lookupProgram prog db)
 
 -- | The package directories and flags of a stage's project file, and of its
 -- @.local@ file (as for @cabal --project-file@), whose flags win.
