@@ -86,6 +86,7 @@ import Distribution.Simple.Program.Builtin (ghcProgram)
 import Distribution.Simple.Program.Db (lookupProgram)
 import Distribution.Simple.Program.Types (programPath)
 import Distribution.Simple.Utils (die', notice, ordNub, warn)
+import Distribution.System (OS (..), Platform (..))
 import Distribution.Utils.MD5 (md5, showMD5)
 import Distribution.Types.InstalledPackageInfo
   ( InstalledPackageInfo
@@ -181,6 +182,9 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan neededUnit
           , rpStoreRootAbs = storeRootAbs
           , rpStoreDbRel = makeRelative storeRootAbs storeDB
           , rpDllExtension = dllExtension (pkgConfigPlatform shared)
+          , rpPicByDefault = case pkgConfigPlatform shared of
+              Platform _ OSX -> True
+              _ -> False
           , rpExternal = []
           }
 
@@ -263,6 +267,8 @@ data RepoPaths = RepoPaths
   -- ^ The store's package db, relative to 'rpStoreRootAbs'.
   , rpDllExtension :: String
   -- ^ The extension of a shared library, without the dot: @so@, or @dylib@ on macos.
+  , rpPicByDefault :: Bool
+  -- ^ Whether GHC's code is always position-independent (as on macOS).
   , rpExternal :: [(FilePath, FilePath)]
   -- ^ Directories that are neither under GHC's libdir nor the cabal store,
   -- and the symlinks (relative to @third-party\/haskell@) to them, which
@@ -500,6 +506,7 @@ prebuiltCall paths uidToTarget p =
       , ("db", str (if rpDbKind p == GlobalDb then globalDbRel else "cabal-store" </> rpStoreDbRel paths))
       , ("static_libs", strList (rel (rpStaticLibs p)))
       ]
+        ++ [("pic_static_libs", strList (rel (rpStaticLibs p))) | rpPicByDefault paths]
         ++ [("profiled_static_libs", strList profiled) | not (null profiled)]
         ++ [("pic_profiled_static_libs", strList profiled) | not (null profiled)]
         ++ [("shared_libs", VDict [(soname, str sopath) | (soname, abs') <- rpSharedLibs p, Just sopath <- [toRepoRelative paths abs']])]

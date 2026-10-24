@@ -670,7 +670,7 @@ missingModule project = do
 -- @ghcWithPackages@) are reached through a symlink for each directory.
 externalDirsTest :: IO ()
 externalDirsTest = do
-  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = [], rpDllExtension = "so"}
+  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = [], rpDllExtension = "so", rpPicByDefault = False}
       aeson = "/nix/store/aaa-aeson-lib-aeson-2.2.5.1/lib/x86_64-linux-ghc-9.6.7"
       text = "/nix/store/bbb-text-lib-text-2.1.4/lib/x86_64-linux-ghc-9.6.7"
       dirs =
