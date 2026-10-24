@@ -1,7 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Example.Lib (greet, addPoints, greetFirst) where
+module Example.Lib (greet, addPoints, greetFirst, makeGreeters) where
 
+import Example.Greeters (makeGreeters)
 import Example.Point (Point(..), addPoint)
 import Example.TH (makeGreeter)
 import Safe (headMay)

@@ -15,6 +15,7 @@ library th
 
 library
   exposed-modules:
+      Example.Greeters
       Example.Point
       Example.Lib
   build-depends:
