@@ -24,6 +24,9 @@ on:
 
 env:
   GHC_VERSION: 9.6.7
+  # So that `buck2 audit dep-files` can list an action's inputs (the
+  # per-module early-cut-off check below).
+  BUCK2_KEEP_DEP_FILE_DIRECTORIES: "true"
   # A dated release of https://github.com/facebook/buck2/releases
   # This is chosen to be compatible with the prelude in the buck2
   # submodule; earlier or later versions are not guaranteed to work.
@@ -271,3 +274,50 @@ jobs:
         run: |
           buck2 build -m prof //...
           buck2 test -m prof //...
+
+      # The same with one action per module (--per-module), and the early
+      # cut-off its dep files give.
+      - name: Generate per-module buck2 build of example/
+        run: |
+          cd example
+          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh --per-module
+
+      - name: buck2 build and test, per module (dev, opt, prof)
+        working-directory: example
+        run: |
+          buck2 build //...
+          buck2 test //...
+          buck2 build -m opt //...
+          buck2 test -m opt //...
+          buck2 build -m prof //...
+          buck2 test -m prof //...
+
+      - name: Early cut-off, per module
+        working-directory: example
+        run: |
+          # A comment-only edit recompiles the module and nothing else: the
+          # other compile actions are skipped by their dep files.
+          printf '\n-- an edit\n' >> Example/Lib.hs
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]local' what-ran.txt)" = 1
+          # Which inputs each kind of module has (the ones its dep file
+          # recorded). Main runs no Template Haskell: it compiles against the
+          # early package dbs of the libraries, two levels down (th through
+          # example), and the ABI files of the modules it imports, not
+          # against any linked shared object or interface directory.
+          # Example.Lib runs a splice, so it needs th's final db (and
+          # library, which GHC's usages don't record); Example.Forest has an
+          # ANN pragma, which GHC evaluates the same way.
+          inputs() { buck2 audit dep-files "$@" | tee inputs.txt; }
+          inputs root//:example-test-bin haskell_compile_module_shared Main
+          grep -q '__example__/db-early-shared' inputs.txt
+          grep -q '__th__/db-early-shared' inputs.txt
+          grep -q 'Example/Lib.abi' inputs.txt
+          if grep -q 'lib-shared' inputs.txt; then exit 1; fi
+          if grep -q 'hi-shared' inputs.txt; then exit 1; fi
+          inputs root//:example haskell_compile_module_shared Example.Lib
+          grep -q '__th__/db-shared' inputs.txt
+          inputs root//:example haskell_compile_module_shared Example.Forest
+          grep -q '__th__/db-shared' inputs.txt
+          if grep -q 'db-early-shared' inputs.txt; then exit 1; fi

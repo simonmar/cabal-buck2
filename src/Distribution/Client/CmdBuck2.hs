@@ -72,7 +72,7 @@ import Distribution.Verbosity (normal)
 import Distribution.Client.Buck2.BuildDependencies (buildDependencies)
 import Distribution.Client.Buck2.Cache (cacheSetting, configureCache)
 import Distribution.Client.Buck2.Configure (configureComponents)
-import Distribution.Client.Buck2.Flags (Buck2Flags (buck2CustomSetup), buck2FlagOptions, defaultBuck2Flags, dependencyMode)
+import Distribution.Client.Buck2.Flags (Buck2Flags (buck2CustomSetup, buck2PerModule), buck2FlagOptions, defaultBuck2Flags, dependencyMode)
 import Distribution.Client.Buck2.LocalPackages
   ( builtLocalPackages
   , translateCustomSetups
@@ -183,6 +183,7 @@ buck2Action flags extraArgs globalFlags = do
         (projectTestOptions mode (elaboratedPlanOriginal buildCtx))
         localPkgs
         (fromFlagOrDefault False (installKeepGoing (installFlags flags)))
+        (fromFlagOrDefault False (buck2PerModule (extraFlags flags)))
 
       notice verbosity $
         unlines

@@ -2,7 +2,7 @@ cabal-version:      3.0
 name:               example
 version:            0.1.0.0
 build-type:         Simple
-synopsis:           Exercises TH, hsc2hs and C++/FFI, to test cabal-buck2 and the buck2 support code.
+synopsis:           Exercises TH, hsc2hs, C++/FFI and an hs-boot cycle, to test cabal-buck2 and the buck2 support code.
 
 -- The Buck2 Haskell prelude has a limitation on Template Haskell use when
 -- profiling: a splice cannot refer to other modules of the same library.
@@ -18,6 +18,8 @@ library
       Example.Greeters
       Example.Point
       Example.Lib
+      Example.Forest
+      Example.Tree
   build-depends:
       base >=4 && <5
     , example:th

@@ -32,6 +32,9 @@ data BuildSpec = BuildSpec
   -- what its build needs, other than its sources, which something
   -- elsewhere in the project may need too (a generator, say).
   , specComponents :: [SpecComponent]
+  , specPerModule :: Bool
+  -- ^ Whether to compile each module in an action of its own
+  -- (@--per-module@), rather than each component with one @ghc --make@.
   }
 
 data ComponentKind = Library | Executable | TestSuite | Benchmark
