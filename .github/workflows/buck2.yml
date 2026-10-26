@@ -271,3 +271,30 @@ jobs:
         run: |
           buck2 build -m prof //...
           buck2 test -m prof //...
+
+      # The same with one action per module (--per-module), and the early
+      # cut-off its dep files give.
+      - name: Generate per-module buck2 build of example/
+        run: |
+          cd example
+          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh --per-module
+
+      - name: buck2 build and test, per module (dev, opt, prof)
+        working-directory: example
+        run: |
+          buck2 build //...
+          buck2 test //...
+          buck2 build -m opt //...
+          buck2 test -m opt //...
+          buck2 build -m prof //...
+          buck2 test -m prof //...
+
+      - name: Early cut-off, per module
+        working-directory: example
+        run: |
+          # A comment-only edit recompiles the module and nothing else: the
+          # other compile actions are skipped by their dep files.
+          printf '\n-- an edit\n' >> Example/Lib.hs
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]local' what-ran.txt)" = 1

@@ -49,8 +49,8 @@ import Distribution.Client.Buck2.Version (cabalBuck2Version)
 --   * @cabal-buck2\/autogen\/BUCK@ (see 'writeAutogenBuck') has
 --     @export_file()@ rules for the autogen files, so they can be
 --     easily referenced from anywhere else.
-writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> Bool -> IO ()
-writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs keepGoing = do
+writeAllPackages :: Verbosity -> FilePath -> Map (PackageName, ComponentName) LocalBuildInfo -> Set String -> Map (PackageName, ComponentName) [PathTemplate] -> [BuiltPackage] -> Bool -> Bool -> IO ()
+writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectTestOptions pkgs keepGoing perModule = do
   sources <- traverse (\pkg -> Set.fromList <$> filterM (doesFileExist . (bpDir pkg </>)) (sourceCandidates (bpDescription pkg))) pkgs
   let generateAll skipped = [generate skipped pkg srcs | (pkg, srcs) <- zip pkgs sources]
       -- A library without a rule makes the components that depend on it
@@ -75,7 +75,7 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
   traverse_ (writeOnePackage verbosity projectRoot) results
   where
     generate skipped pkg srcs =
-      generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (bpCustomSetup pkg) (bpDescription pkg)
+      generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions srcs skipped (bpInProject pkg) (bpCustomSetup pkg) perModule (bpDescription pkg)
 
     librariesWithoutRule pkg (targets, _) =
       [ (packageName desc, libName lib)
@@ -211,6 +211,7 @@ specValue spec =
     , ("package", VDict [("name", str (specPackageName spec)), ("version", str (specPackageVersion spec))])
     ]
       ++ listField "ghc_options" (specGhcOptions spec)
+      ++ [("per_module", VBool True) | specPerModule spec]
       ++ [ ("data", VDict [("dir", str (specDataDir spec)), ("files", strList (specDataFiles spec))])
          | not (null (specDataFiles spec))
          ]

@@ -249,6 +249,38 @@ To use any of these modes, add them using `-m` on the command line:
 buck2 build my-package:my-program -m opt
 ```
 
+# Per-module compilation (experimental)
+
+```
+cabal buck2 --per-module
+```
+
+generates targets with `per_module = True`, which the Buck2 rules compile
+one module per action: a `ghc -M` action computes each component's module
+graph, and each module is compiled by its own `ghc -c` with the interfaces
+of its imports. Buck2 then schedules the modules of a component in parallel
+with everything else it has to build, and each module's action records what
+it read in a dep file, so after an edit only the modules whose imports'
+interfaces changed (by ABI hash) are recompiled, within a package and across
+packages, with the policy `ghc --make` itself has. A comment-only or
+implementation-only edit to a module recompiles that module and nothing
+else (and, as with `--make`, the modules whose Template Haskell splices
+loaded its object).
+
+Each one-shot compile starts a GHC and loads the interfaces of its imports
+(and, for Template Haskell, the shared libraries of the component's
+dependencies), which `--make` does once per component, so a component's
+modules take several times the CPU in total and a clean compile of a
+component is slower than with `--make` even with every core busy, whether
+or not it uses Template Haskell. Whether that is a net win depends on the
+project: measure a clean build and the rebuild after a typical edit both
+ways. Running buck2 with `-j` set to the number of physical cores, and a
+larger GHC allocation area (`compiler_flags = +RTS -A64m -RTS` under
+`[haskell]` in `.buckconfig.local`), help this mode. The setting can also
+be made per component, in the project's `cabal-buck2.bzl`
+(`"per_module": True` in a component's overrides, see
+[Customising the build](#customising-the-build)).
+
 # Sharing build results (a build cache)
 
 By default buck2 keeps nothing between runs of its daemon, nor between
@@ -393,14 +425,14 @@ This has some implications:
   `cabal-install` library that `cabal-buck2` was built against. Try to
   make sure they match, or confusion will undoubtedly ensue.
 
-## Builds currently use `--make`
+## Builds use `--make` by default
 
-The current Buck2 prelude uses `ghc --make` to build each component
-(library, executable). Ideally we should expose the full per-module
-dependencies to Buck2 so that it can exploit parallelism across
-packages for faster builds/rebuilds. It's entirely possible to do
-this, indeed the functionality already exists in [Tweag's Haskell/Buck2
-integration](https://github.com/tweag/buck2-haskell).
+Each component (library, executable) is built with one `ghc --make`
+action, so its modules are compiled one after another and an edit to
+one of them re-runs the whole component's action (which GHC's own
+recompilation check then cuts short). `cabal buck2 --per-module`
+generates targets that are compiled one module per action instead; see
+[Per-module compilation](#per-module-compilation).
 
 ## Custom build type
 
