@@ -229,7 +229,7 @@ jobs:
         id: cache
         with:
           path: ${{ steps.store.outputs.dir }}
-          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal') }}
+          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal', 'example/spec/spec.cabal') }}
           restore-keys: ${{ steps.get-osver.outputs.osver }}-store-example-
 
       - name: Build cabal-buck2

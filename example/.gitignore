@@ -8,3 +8,6 @@
 /cabal-buck2/
 /third-party/
 /dist-newstyle/
+/spec/BUCK
+/spec/BUCK.cabal.bzl
+/spec/cabal-buck2/
