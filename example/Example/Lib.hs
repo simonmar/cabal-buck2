@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Example.Lib (greet, addPoints, greetFirst, makeGreeters) where
+module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters) where
 
 import Example.Greeters (makeGreeters)
 import Example.Point (Point(..), addPoint)
@@ -8,6 +8,10 @@ import Example.TH (makeGreeter)
 import Safe (headMay)
 
 $(makeGreeter "greet")
+
+-- This splice uses the 'makeGreeters' TH defined in this library
+-- itself.
+$(makeGreeters ["hello"])
 
 addPoints :: Int -> Int -> IO Int
 addPoints x y = addPoint (Point (fromIntegral x) (fromIntegral y))

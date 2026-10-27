@@ -4,10 +4,9 @@ version:            0.1.0.0
 build-type:         Simple
 synopsis:           Exercises TH, hsc2hs and C++/FFI, to test cabal-buck2 and the buck2 support code.
 
--- The Buck2 Haskell prelude has a limitation on Template Haskell use when
--- profiling: a splice cannot refer to other modules of the same library.
--- Hence the separate library for Example.TH, which is used in a splice in
--- Example.Lib.
+-- Example.TH is in a library of its own, and Example.Greeters in the same
+-- library as Example.Lib, so that Example.Lib has splices using both a
+-- module of another library and one of its own library.
 library th
   exposed-modules:  Example.TH
   build-depends:    base >=4 && <5, template-haskell
