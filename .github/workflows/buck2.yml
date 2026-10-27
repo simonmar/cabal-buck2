@@ -24,6 +24,9 @@ on:
 
 env:
   GHC_VERSION: 9.6.7
+  # So that `buck2 audit dep-files` can list an action's inputs (the
+  # per-module early-cut-off check below).
+  BUCK2_KEEP_DEP_FILE_DIRECTORIES: "true"
   # A dated release of https://github.com/facebook/buck2/releases
   # This is chosen to be compatible with the prelude in the buck2
   # submodule; earlier or later versions are not guaranteed to work.
@@ -155,12 +158,19 @@ jobs:
         run: buck2 test //...
 
   example:
-    name: example (${{ matrix.os }})
+    name: example (${{ matrix.os }}, GHC ${{ matrix.ghc }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        ghc: [9.6.7]  # as GHC_VERSION above (a matrix can't read env)
+        include:
+          # The example on a recent GHC too.
+          - os: ubuntu-latest
+            ghc: 9.12.4
+    env:
+      GHC_VERSION: ${{ matrix.ghc }}
     defaults:
       run:
         shell: bash
@@ -229,8 +239,8 @@ jobs:
         id: cache
         with:
           path: ${{ steps.store.outputs.dir }}
-          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal') }}
-          restore-keys: ${{ steps.get-osver.outputs.osver }}-store-example-
+          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ matrix.ghc }}-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal') }}
+          restore-keys: ${{ steps.get-osver.outputs.osver }}-store-example-${{ matrix.ghc }}-
 
       - name: Build cabal-buck2
         run: cabal build exe:cabal-buck2
@@ -271,3 +281,121 @@ jobs:
         run: |
           buck2 build -m prof //...
           buck2 test -m prof //...
+
+      # The same with one action per module (--per-module), and the early
+      # cut-off its dep files give.
+      - name: Generate per-module buck2 build of example/
+        run: |
+          cd example
+          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh --per-module
+
+      - name: buck2 build and test, per module (dev, opt, prof)
+        working-directory: example
+        run: |
+          buck2 build //...
+          buck2 test //...
+          buck2 build -m opt //...
+          buck2 test -m opt //...
+          buck2 build -m prof //...
+          buck2 test -m prof //...
+
+      - name: Early cut-off, per module
+        working-directory: example
+        run: |
+          # A comment-only edit recompiles the module and nothing else: the
+          # other compile actions are skipped by their dep files.
+          printf '\n-- an edit\n' >> Example/Lib.hs
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]local' what-ran.txt)" = 1
+          # Which inputs each kind of module has (the ones its dep file
+          # recorded). Main runs no Template Haskell: it compiles against the
+          # early package dbs of the libraries, two levels down (th through
+          # example), and the ABI files of the modules it imports, not
+          # against any linked shared object or interface directory.
+          # Example.Lib runs a splice, so it needs th's final db (and
+          # library, which GHC's usages don't record); Example.Forest has an
+          # ANN pragma, which GHC evaluates the same way.
+          inputs() { buck2 audit dep-files "$@" | tee inputs.txt; }
+          inputs root//:example-test-bin haskell_compile_module_shared Main
+          grep -q '__example__/db-early-shared' inputs.txt
+          grep -q '__th__/db-early-shared' inputs.txt
+          grep -q 'Example/Lib.abi' inputs.txt
+          if grep -q 'lib-shared' inputs.txt; then exit 1; fi
+          if grep -q 'hi-shared' inputs.txt; then exit 1; fi
+          inputs root//:example haskell_compile_module_shared Example.Lib
+          grep -q '__th__/db-shared' inputs.txt
+          inputs root//:example haskell_compile_module_shared Example.Forest
+          grep -q '__th__/db-shared' inputs.txt
+          if grep -q 'db-early-shared' inputs.txt; then exit 1; fi
+
+      # The same through the persistent worker of the buck2 rules
+      # (buck2/tools/ghc-worker), which compiles a target's modules in one
+      # GHC session: the actions then run in a worker rather than as
+      # processes of their own. Installed, and named in .buckconfig.local.
+      - name: Install the per-module worker
+        working-directory: buck2/tools/ghc-worker
+        run: cabal install --installdir="$RUNNER_TEMP/bin" --program-suffix="-$GHC_VERSION" exe:ghc-worker
+
+      - name: Use the installed worker
+        working-directory: example
+        run: printf '[haskell]\n  per_module_worker = %s\n' "$RUNNER_TEMP/bin/ghc-worker-$GHC_VERSION" > .buckconfig.local
+
+      - name: buck2 build and test, per module with the worker (dev, opt, prof)
+        working-directory: example
+        run: |
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]worker[[:space:]]' what-ran.txt)" -gt 0
+          buck2 test //...
+          buck2 build -m opt //...
+          buck2 test -m opt //...
+          buck2 build -m prof //...
+          buck2 test -m prof //...
+
+      - name: Early cut-off, per module with the worker
+        working-directory: example
+        run: |
+          printf '\n-- another edit\n' >> Example/Lib.hs
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]worker[[:space:]]' what-ran.txt)" = 1
+          # The worker writes the dep files the script wrote.
+          buck2 audit dep-files root//:example-test-bin haskell_compile_module_shared Main | tee inputs.txt
+          grep -q 'Example/Lib.abi' inputs.txt
+
+      # The worker as a package of the project (cabal.project.worker), which
+      # buck2 then builds with the project's GHC and the per-module targets
+      # use.
+      - name: Generate per-module buck2 build of example/, with the worker as a package
+        run: |
+          cd example
+          cp cabal.project.worker cabal.project
+          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh --per-module
+          grep -q 'GHC_WORKER_TARGET = "//buck2/tools/ghc-worker:ghc-worker"' third-party/haskell/tools.bzl
+          printf '[haskell]\n  per_module_worker = local\n' > .buckconfig.local
+
+      - name: buck2 build and test, per module with the worker built by buck2
+        working-directory: example
+        run: |
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          grep -q 'ghc-worker:ghc-worker.*haskell_link' what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]worker[[:space:]]' what-ran.txt)" -gt 0
+          buck2 test //...
+          printf '\n-- a third edit\n' >> Example/Lib.hs
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]worker[[:space:]]' what-ran.txt)" = 1
+
+      # With `none`, there is no worker even though the project builds one.
+      # The compiles' command lines change with it, so they all run again,
+      # as processes of their own.
+      - name: buck2 build, per module with the worker switched off
+        working-directory: example
+        run: |
+          printf '[haskell]\n  per_module_worker = none\n' > .buckconfig.local
+          buck2 build //...
+          buck2 log what-ran | tee what-ran.txt
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]worker[[:space:]]' what-ran.txt)" = 0
+          test "$(grep -c 'haskell_compile_module.*[[:space:]]local[[:space:]]' what-ran.txt)" -gt 0

@@ -8,3 +8,5 @@
 /cabal-buck2/
 /third-party/
 /dist-newstyle/
+# Local settings, such as the per-module worker
+/.buckconfig.local

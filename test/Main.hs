@@ -67,6 +67,7 @@ runUnitTest (name, test) = do
 tests :: [(String, Project -> IO ())]
 tests =
   [ ("basic", basic)
+  , ("per-module", perModule)
   , ("disabled-stanzas", disabledStanzas)
   , ("missing-module", missingModule)
   , ("cache-config", cacheConfig)
@@ -143,6 +144,7 @@ runTest exe (name, test) = do
       "cache-config" -> "basic"
       "buck2-version" -> "basic"
       "project-overrides" -> "basic"
+      "per-module" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir
@@ -584,6 +586,18 @@ projectOverrides project = do
   with <- readIn project ("cabal-buck2" </> "packages.bzl")
   assertContains "packages.bzl" "load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" with
   assertContains "packages.bzl" "OVERRIDES = _OVERRIDES" with
+
+-- | @--per-module@ is recorded in every package's spec, for buck2/cabal.bzl
+-- to set on each of its targets.
+perModule :: Project -> IO ()
+perModule project = do
+  _ <- buck2 project []
+  without <- readIn project ("lib-pkg" </> "BUCK.cabal.bzl")
+  assertNotContains "BUCK.cabal.bzl" "'per_module'" without
+
+  _ <- buck2 project ["--per-module"]
+  with <- readIn project ("lib-pkg" </> "BUCK.cabal.bzl")
+  assertContains "BUCK.cabal.bzl" "'per_module': True," with
 
 -- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
 -- kept by later runs without the flag, and @--no-cache@ removes.

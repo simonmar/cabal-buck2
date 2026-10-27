@@ -1,0 +1,6 @@
+-- The example with the rules' persistent worker (buck2/tools/ghc-worker)
+-- as a package of the project, built by buck2 with the project's GHC: CI
+-- generates the example from this file in place of cabal.project.
+packages: . buck2/tools/ghc-worker
+
+tests: True

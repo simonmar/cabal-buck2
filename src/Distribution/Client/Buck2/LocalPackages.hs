@@ -319,14 +319,17 @@ data ToolTarget = ToolTarget
 
 -- | The targets of @alex@ and @happy@, when they are among the packages built
 -- from source: the rules that preprocess @.x@ and @.y@ files run those
--- instead of one in the cabal store.
+-- instead of one in the cabal store. And of @ghc-worker@, the persistent
+-- worker of the per-module compiles that comes with the rules
+-- (@buck2/tools/ghc-worker@), when the project builds it from source: the
+-- toolchain then uses it, built with the project's own GHC.
 localToolTargets :: FilePath -> [BuiltPackage] -> Map String ToolTarget
 localToolTargets projectRoot pkgs =
   Map.fromList
     [ (tool, ToolTarget{toolLabel = label pkg (nonLibraryTargetName "-exe" desc (PD.exeName exe)), toolData = dataFor (packageName desc : map depPkgName (PD.targetBuildDepends (PD.buildInfo exe)))})
     | pkg <- pkgs
     , let desc = bpDescription pkg
-    , tool <- ["alex", "happy"]
+    , tool <- ["alex", "happy", "ghc-worker"]
     , prettyShow (packageName desc) == tool
     , exe <- take 1 [e | e <- PD.executables desc, unUnqualComponentName (PD.exeName e) == tool]
     ]

@@ -21,10 +21,11 @@ data Buck2Flags = Buck2Flags
   , buck2NoCache :: Flag Bool
   , buck2SourceDeps :: Flag Bool
   , buck2CustomSetup :: Flag Bool
+  , buck2PerModule :: Flag Bool
   }
 
 defaultBuck2Flags :: Buck2Flags
-defaultBuck2Flags = Buck2Flags{buck2CacheAddress = mempty, buck2NoCache = mempty, buck2SourceDeps = mempty, buck2CustomSetup = mempty}
+defaultBuck2Flags = Buck2Flags{buck2CacheAddress = mempty, buck2NoCache = mempty, buck2SourceDeps = mempty, buck2CustomSetup = mempty, buck2PerModule = mempty}
 
 buck2FlagOptions :: ShowOrParseArgs -> [OptionField Buck2Flags]
 buck2FlagOptions _ =
@@ -55,6 +56,13 @@ buck2FlagOptions _ =
       "Build the packages with build-type: Custom as if they had build-type: Configure (if they have a configure script) or Simple, rather than skipping them. Their Setup.hs isn't run: the modules it would generate must be provided (see buck2/cabal.bzl)."
       buck2CustomSetup
       (\v f -> f{buck2CustomSetup = v})
+      trueArg
+  , option
+      []
+      ["per-module"]
+      "Experimental: build each module as a buck2 action of its own, rather than each component as one. Finer-grained parallelism and rebuilds, for more compilation work in total (see the README)."
+      buck2PerModule
+      (\v f -> f{buck2PerModule = v})
       trueArg
   ]
 

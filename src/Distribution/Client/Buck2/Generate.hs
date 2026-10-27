@@ -220,9 +220,12 @@ generatePackageTargets
   -- didn't (@--enable-custom-setup@), so its @Setup.hs@ isn't run: the
   -- modules that would have generated (its @autogen-modules@, other than
   -- the ones generated here) are up to the project.
+  -> Bool
+  -- ^ Whether to compile each module in an action of its own
+  -- (@--per-module@).
   -> PackageDescription
   -> (PackageTargets, [String])
-generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject customSetup pkgDesc =
+generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools projectTestOptions sources skippedLibs inProject customSetup perModule pkgDesc =
   (targets, concatMap ctWarnings results)
   where
     generate = generateComponent localIndex projectRoot componentLBIs externalBuildTools projectTestOptions (Sources sources provided) skippedLibs inProject pkgDesc
@@ -247,7 +250,7 @@ generatePackageTargets localIndex projectRoot componentLBIs externalBuildTools p
     components = [c{scBootSrcs = bootSources sources (scSrcs c)} | c <- concatMap ctSpec results]
     targets =
       PackageTargets
-        { ptSpec = packageSpec pkgDesc (packageGhcOptions pkgDesc componentLBIs) components
+        { ptSpec = packageSpec pkgDesc (packageGhcOptions pkgDesc componentLBIs) perModule components
         , ptComponentCount = length components
         , ptAutogenFiles = dedupAutogenFiles (concatMap ctAutogen results)
         , ptNotes = concatMap ctNotes results
@@ -488,8 +491,8 @@ generatedIncludeDirs projectRoot pkgDesc lbi bi
   | otherwise = []
 
 -- | A package's build spec.
-packageSpec :: PackageDescription -> [String] -> [SpecComponent] -> BuildSpec
-packageSpec pkgDesc projectGhcOptions components =
+packageSpec :: PackageDescription -> [String] -> Bool -> [SpecComponent] -> BuildSpec
+packageSpec pkgDesc projectGhcOptions perModule components =
   BuildSpec
     { specPackageName = unPackageName (packageName pkgDesc)
     , specPackageVersion = prettyShow (packageVersion pkgDesc)
@@ -500,6 +503,7 @@ packageSpec pkgDesc projectGhcOptions components =
     , specDataFiles = map (normalise . getSymbolicPath) (dataFiles pkgDesc)
     , specExtraSourceFiles = map (normalise . getSymbolicPath) (extraSrcFiles pkgDesc)
     , specComponents = components
+    , specPerModule = perModule
     }
 
 -- | A component of a build spec, from its 'BuildInfo'. The kind-specific

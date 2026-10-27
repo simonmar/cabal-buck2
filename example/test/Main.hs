@@ -1,6 +1,8 @@
 module Main (main) where
 
 import Example.Lib (addPoints, greet, greetFirst)
+import Example.Forest (Forest (..))
+import Example.Tree (Tree (..), size)
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
@@ -9,6 +11,7 @@ main = do
   total <- addPoints 3 4
   let firstOf = greetFirst ["Alice", "Bob"]
       firstOfEmpty = greetFirst []
+      treeSize = size (Node (Forest [Leaf, Node (Forest [Leaf])]))
       failures =
         [ msg
         | (ok, msg) <-
@@ -16,6 +19,7 @@ main = do
             , (total == 7, "addPoints: got " ++ show total)
             , (firstOf == "Hello, Alice!", "greetFirst: got " ++ show firstOf)
             , (firstOfEmpty == "Hello, stranger!", "greetFirst (empty): got " ++ show firstOfEmpty)
+            , (treeSize == 4, "size: got " ++ show treeSize)
             ]
         , not ok
         ]
