@@ -436,32 +436,6 @@ including the package's `setup-depends`. It has to be built with the
 same Cabal version as `cabal-buck2`, so `cabal-buck2` injects a
 solver constraint to ensure that.
 
-## **Template Haskell and `prof`**
-
-A module that defines a splice must live in a *different*
-`haskell_library()` from any module that uses it, when profiling (`-m
-prof`). If not, the build will likely complain about a link error or a
-missing object file at compile-time.
-
-The situation with Template Haskell and profiling is complex, as is
-the reason for this limitation.
-
-* Without `-fexternal-interpreter`: GHC loads object code at
-  compile-time into its own process. Since GHC is itself a
-  dynamically-linked non-profiled executable, the objects it loads
-  must be shared, non-profiled, objects. So we have to build all the
-  dependencies of the current packages as shared libraries. This is
-  fine, except for the current package: GHC expects to find the
-  `.dyn_o` objects for the current package in the current `-odir`. But
-  Buck2 doesn't work this way: it builds the two instances of the
-  package separately. It's not clear if this is easily fixable.
-
-* With `-fexternal-interpreter`, we could load the profiled non-shared
-  objects. However, this method uses the RTS runtime linker, which is
-  known to have some limitations and can't load some objects,
-  particularly on certain architectures. This is the main reason that
-  GHC switched to dynamic linking. So we don't go this route.
-
 ## No support for Cabal's `foreign-library`
 
 Nothing fundamental blocking this, it's just a TODO.

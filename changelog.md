@@ -22,6 +22,8 @@
     together with `ghc-options: -main-is ...`.
   * Modules in `other-modules` are now correctly hidden outside the
     component.
+  * A Template Haskell splice can use a module of the same library
+    when profiling (`-m prof`).
 
 # 0.4.0.0
 
