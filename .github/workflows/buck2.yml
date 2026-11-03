@@ -105,9 +105,18 @@ jobs:
       - name: Generate build plan for correct cache key
         run: cabal build all --dry-run
 
+      # On macOS, the SDK too: packages' configure scripts look for functions
+      # in the SDK's headers, and what they find has to be in the libraries
+      # of the SDK that links against them. Images of the same macOS have
+      # come with different SDKs (macos-26: 27.0, then 26.6), and process
+      # built with the 27.0 SDK, restored from the cache, then used pipe2,
+      # which 26.6 doesn't have.
       - name: Get runner OS/version for cache keys
         id: get-osver
-        run: echo "osver=$ImageOS" >> "$GITHUB_OUTPUT"
+        run: |
+          osver=$ImageOS
+          if [ "$RUNNER_OS" = macOS ]; then osver="$osver-sdk$(xcrun --show-sdk-version)"; fi
+          echo "osver=$osver" >> "$GITHUB_OUTPUT"
 
       # Where cabal keeps its store depends on whether ~/.cabal exists (the
       # setup action makes it), so ask it.
@@ -214,9 +223,18 @@ jobs:
       - name: Generate build plan for correct cache key
         run: cabal build all --dry-run
 
+      # On macOS, the SDK too: packages' configure scripts look for functions
+      # in the SDK's headers, and what they find has to be in the libraries
+      # of the SDK that links against them. Images of the same macOS have
+      # come with different SDKs (macos-26: 27.0, then 26.6), and process
+      # built with the 27.0 SDK, restored from the cache, then used pipe2,
+      # which 26.6 doesn't have.
       - name: Get runner OS/version for cache keys
         id: get-osver
-        run: echo "osver=$ImageOS" >> "$GITHUB_OUTPUT"
+        run: |
+          osver=$ImageOS
+          if [ "$RUNNER_OS" = macOS ]; then osver="$osver-sdk$(xcrun --show-sdk-version)"; fi
+          echo "osver=$osver" >> "$GITHUB_OUTPUT"
 
       # Where cabal keeps its store depends on whether ~/.cabal exists (the
       # setup action makes it), so ask it.
