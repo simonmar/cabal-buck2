@@ -1,0 +1,42 @@
+cabal-version:      3.0
+name:               spec
+version:            0.1.0.0
+build-type:         Simple
+synopsis:           Fixture package for Cabal features that buck2/cabal.bzl has to translate.
+description:
+    Each component uses one feature that cabal.bzl translates rather than
+    passes through: the library a CPP include from include-dirs and a system
+    library in extra-libraries that its own shared object must link (the
+    test suite loads it at compile time, through Template Haskell); the
+    sub-library spec-pc pkgconfig-depends with no C sources; the executable
+    -main-is with an other-module called Main.
+
+library
+  exposed-modules:  Spec.Lib
+  hs-source-dirs:   src
+  include-dirs:     include
+  extra-libraries:  z
+  build-depends:    base >=4 && <5
+  default-language: Haskell2010
+
+library spec-pc
+  exposed-modules:    Spec.PC
+  hs-source-dirs:     pc
+  pkgconfig-depends:  zlib
+  build-depends:      base >=4 && <5
+  default-language:   Haskell2010
+
+executable spec-run
+  main-is:          Run.hs
+  other-modules:    Main
+  hs-source-dirs:   app
+  ghc-options:      -main-is Run.main
+  build-depends:    base >=4 && <5, spec:spec-pc
+  default-language: Haskell2010
+
+test-suite spec-test
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   test
+  build-depends:    base >=4 && <5, template-haskell, spec
+  default-language: Haskell2010
