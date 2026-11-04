@@ -1,11 +1,11 @@
 cabal-version:      3.8
 name:               cabal-buck2
-version:            0.5.0.0
+version:            0.6.0.0
 
 -- To ship a new version:
 --   - bump the version above
 --   - update the changelog & README
---   - push the changes to the A.B branch of cabal-buck2
+--   - push the changes to the master branch of cabal-buck2
 --   - create a branch A.B.C.D on haskell-buck2
 --   - push an update to `version.bzl` for A.B.C.D on that branch
 --   - cabal install locally, and check it on a local repo
