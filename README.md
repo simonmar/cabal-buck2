@@ -23,7 +23,7 @@ git clone https://github.com/simonmar/haskell-buck2.git buck2 -b <version>
 cabal buck2 --enable-tests
 ```
 
-Where `<version>` is the version of `cabal-buck`,
+Where `<version>` is the version of `cabal-buck2`,
 e.g. `0.2.0.0`. Checking out the branch ensures that you get a
 compatible copy of the Buck2 support code. `cabal buck2` checks that
 `buck2/` is for its release (the `CABAL_BUCK2_VERSION` in
