@@ -9,6 +9,10 @@
   * The path to GHC, its tools and the C/C++ compilers are now fixed
     when you run `cabal buck2` rather than being found via `PATH`
     (see https://github.com/simonmar/haskell-buck2/issues/29)
+  * An executable with `enable_profiling = True` now links its libraries'
+    profiled archives whatever the build mode, rather than their
+    non-profiled shared libraries in a dev build
+    (see https://github.com/simonmar/haskell-buck2/issues/30)
 
 # 0.5.0.0
 
