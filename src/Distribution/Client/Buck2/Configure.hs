@@ -8,6 +8,7 @@ import Distribution.Client.Compat.Prelude
 import Prelude ()
 
 import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map.Strict
 
 import Control.Concurrent (getNumCapabilities, setNumCapabilities)
 import Control.Concurrent.STM
@@ -45,8 +46,8 @@ import Distribution.Simple.Compiler (PackageDBX (GlobalPackageDB))
 import Distribution.Simple.PackageIndex (InstalledPackageIndex)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Simple.Program.Builtin (builtinPrograms)
-import Distribution.Simple.Program.Db (prependProgramSearchPathNoLogging, restoreProgramDb, updateProgram, userSpecifyArgss)
-import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programVersion), simpleConfiguredProgram)
+import Distribution.Simple.Program.Db (configuredPrograms, prependProgramSearchPathNoLogging, restoreProgramDb, updateConfiguredProgs, updateProgram, userSpecifyArgss)
+import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programMonitorFiles, programOverrideEnv, programVersion), simpleConfiguredProgram)
 import Distribution.Simple.Register (generateRegistrationInfo)
 import qualified Distribution.Simple.Setup as Cabal
 import Distribution.Simple.Program (defaultProgramDb)
@@ -57,6 +58,7 @@ import Distribution.Types.LocalBuildInfo
   , componentNameCLBIs
   , distPrefLBI
   , relocatable
+  , withPrograms
   )
 import Distribution.Types.UnitId (UnitId)
 import Distribution.Types.UnqualComponentName (unUnqualComponentName)
@@ -267,13 +269,28 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
     let elab = localElabs Map.! uid
         pkgDesc = elabPkgDescription elab
     idx <- readTVarIO indexVar
-    lbi <- localBuildInfoFor verbosity mode distDirLayout plan shared idx elab
+    lbi <- withoutSearchState =<< localBuildInfoFor verbosity mode distDirLayout plan shared idx elab
     for_ (componentNamesFor elab pkgDesc) $ \cname -> do
       mipi <- libraryInstalledPackageInfo verbosity lbi pkgDesc cname
       for_ mipi $ \ipi -> atomically $ modifyTVar' indexVar (PackageIndex.insert ipi)
       atomically $ modifyTVar' componentLBIsVar (Map.insert (packageName pkgDesc, cname) lbi)
 
   readTVarIO componentLBIsVar
+
+-- | The 'LocalBuildInfo' without what each configured program keeps of its
+-- search: the @PATH@ it was found on, as an environment override, and every
+-- place it was looked for, as files to monitor. @cabal buck2@ uses neither,
+-- and each program has its own copy, made when the component is configured:
+-- with the @PATH@ of a large development shell, that comes to tens of
+-- megabytes for every component, all kept until the build is generated.
+withoutSearchState :: LocalBuildInfo -> IO LocalBuildInfo
+withoutSearchState lbi = do
+  let progs = updateConfiguredProgs (Map.Strict.map forget) (withPrograms lbi)
+      forget prog = prog{programOverrideEnv = [], programMonitorFiles = []}
+  -- Forced now, or the new 'LocalBuildInfo' would keep the old programs
+  -- until something looked at them.
+  _ <- evaluate (length (configuredPrograms progs))
+  evaluate lbi{withPrograms = progs}
 
 -- | How many jobs a parallel strategy allows to run at once: @-j@ with no
 -- number means one per processor, @-jsem N@ is treated as @-jN@.
