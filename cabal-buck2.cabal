@@ -74,6 +74,7 @@ library
     Distribution.Client.Buck2.Setup
     Distribution.Client.Buck2.Spec
     Distribution.Client.Buck2.Starlark
+    Distribution.Client.Buck2.Toolchain
     Distribution.Client.Buck2.Unpack
     Distribution.Client.Buck2.Version
     Distribution.Client.Buck2.Write

@@ -227,6 +227,33 @@ haskell_test(
 
 You can find docs on how to write `BUCK` files in the Buck2 docs, e.g. [haskell_library](https://buck2.build/docs/prelude/rules/haskell/haskell_library/).
 
+## The compilers
+
+Buck2 builds with the tools that `cabal buck2` found when it last ran, not
+with whatever is on the `PATH` of the shell you run `buck2` in. So after
+changing your tools (a different GHC, or a different Nix shell), re-run
+`cabal buck2`; restarting buck2 isn't needed. (`cabal buck2` puts a symlink to
+each of them in `third-party/haskell/toolchain`.)
+
+* GHC is the one that `cabal` uses (`-w` chooses another), and `ghc-pkg`,
+  `hsc2hs` and `haddock` are those that `cabal` finds (normally next to
+  GHC; use `--with-hsc2hs` and so on choose different ones).
+* The C and C++ compilers, for your packages' C and C++ sources, are:
+  * the C compiler you give `cabal` for `gcc`, with `--with-gcc`, or in
+    `cabal.project` (or `cabal.project.local`):
+    ```
+    program-locations
+      gcc-location: clang
+    ```
+    and the C++ compiler of the same name next to it (`clang++` for `clang`,
+    `g++` for `gcc`, `clang++-18` for `clang-18`...). `cabal` uses the C
+    compiler for the C of the packages it builds too.
+  * otherwise GHC's, if it has an absolute path for "C compiler
+    command" in `ghc --info` (as a GHC built by Nix
+    does);
+  * otherwise `clang` and `clang++`, linking with `g++`. These are the
+    Buck2 toolchain defaults.
+
 # Build modes
 
 The Buck2 build system has the following build mode options, which can

@@ -1,6 +1,14 @@
 # 0.6.0.0
 
   * For `cabal-install` version 3.18
+  * The way the C/C++ compiler is chosen has changed. Previously it
+    always defaulted to `clang`/`clang++` because those are the Buck2
+    toolchain defaults. Now we use the `--with-gcc` option to Cabal if
+    supplied, or GHC's "C compiler command" if it uses an absolute path,
+    or otherwise the `clang`/`clang++` default as before.
+  * The path to GHC, its tools and the C/C++ compilers are now fixed
+    when you run `cabal buck2` rather than being found via `PATH`
+    (see https://github.com/simonmar/haskell-buck2/issues/29)
 
 # 0.5.0.0
 
