@@ -87,17 +87,24 @@ fingerprintOf props confs =
 --
 -- It is made from what the tools report about themselves, so it identifies
 -- the versions in use and not the files: the C compiler @GHC@ is configured
--- with (@gcc@, normally) together with @cc@, @c++@, @g++@ and @ld@, the C
--- library, and the C++ standard library the compiler would link.
-ccFingerprint :: Compiler -> IO String
-ccFingerprint compiler = do
+-- with (@gcc@, normally) together with @cc@, @c++@, @g++@ and @ld@, the tools
+-- that buck2 runs for C and C++ (see "Distribution.Client.Buck2.Toolchain"),
+-- the C library, and the C++ standard library the compiler would link.
+ccFingerprint
+  :: Compiler
+  -> [(String, FilePath)]
+  -- ^ The tools that buck2 runs, by role (which, unlike their paths, are the
+  -- same wherever they are installed).
+  -> IO String
+ccFingerprint compiler buck2Tools = do
   let ghcCC = Map.findWithDefault "gcc" "C compiler command" (compilerProperties compiler)
       tools = ordNubOn id [ghcCC, "cc", "c++", "g++", "ld"]
   versions <- mapM (\t -> (,) t <$> firstLine ["--version"] t) tools
+  buck2Versions <- mapM (\(role, t) -> (,) role <$> firstLine ["--version"] t) buck2Tools
   target <- firstLine ["-dumpmachine"] "cc"
   libc <- firstLine ["--version"] "ldd"
   libcxx <- stdlibName
-  return (ccFingerprintOf ([("target", target), ("libc", libc), ("libstdc++", libcxx)] ++ versions))
+  return (ccFingerprintOf ([("target", target), ("libc", libc), ("libstdc++", libcxx)] ++ versions ++ buck2Versions))
   where
     firstLine args cmd = do
       r <- try (readProcessWithExitCode cmd args "")

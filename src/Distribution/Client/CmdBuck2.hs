@@ -36,6 +36,7 @@ module Distribution.Client.CmdBuck2
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import Distribution.Client.DistDirLayout (DistDirLayout (distProjectRootDirectory))
@@ -45,7 +46,8 @@ import Distribution.Client.NixStyleOptions
   , defaultNixStyleFlags
   , nixStyleOptions
   )
-import Distribution.Client.ProjectConfig (ProjectConfig (..), ProjectConfigShared (..))
+import Distribution.Client.ProjectConfig (PackageConfig (..), ProjectConfig (..), ProjectConfigShared (..))
+import Distribution.Client.ProjectConfig.Types (MapLast (getMapLast))
 import Distribution.Client.ProjectOrchestration
 import Distribution.Client.Targets (UserConstraint (..), UserConstraintScope (..))
 import Distribution.Solver.Types.ConstraintSource (ConstraintSource (ConstraintSourceUnknown))
@@ -130,6 +132,14 @@ withHooksConstraint ctx =
       )
     release = alterVersion (take 2) cabalVersion
 
+-- | The program locations that the user gave (@--with-PROG@, or the
+-- @program-locations@ of the project file), by program name: for the local
+-- packages, else for all of them.
+userProgramPaths :: ProjectConfig -> Map String FilePath
+userProgramPaths config =
+  getMapLast (packageConfigProgramPaths (projectConfigLocalPackages config))
+    `Map.union` getMapLast (packageConfigProgramPaths (projectConfigAllPackages config))
+
 -- | Implement @cabal buck2@
 buck2Action :: NixStyleFlags Buck2Flags -> [String] -> GlobalFlags -> IO ()
 buck2Action flags extraArgs globalFlags = do
@@ -170,6 +180,7 @@ buck2Action flags extraArgs globalFlags = do
           (localToolTargets projectRoot localPkgs)
           (localBuildTools projectRoot localPkgs)
           (wantedBuildTools localPkgs)
+          (userProgramPaths (projectConfig baseCtx))
 
       -- 'generatePrebuilt' already found and parsed every real @.conf@
       -- file of the resolved dependency closure.

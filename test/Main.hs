@@ -30,6 +30,7 @@ import System.Process (CreateProcess (..), callProcess, getCurrentPid, proc, rea
 import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
 import Distribution.Client.Buck2.Fingerprint (ccFingerprintOf, fingerprintOf)
 import Distribution.Client.Buck2.Prebuilt (RepoPaths (..), externalDirs, prebuiltLinkerFlags, toRepoRelative)
+import Distribution.Client.Buck2.Toolchain (chooseCompilers, cxxCompilerFor)
 import Distribution.Client.Buck2.Version (cabalBuck2Version)
 import Distribution.InstalledPackageInfo (InstalledPackageInfo (..), emptyInstalledPackageInfo)
 
@@ -53,7 +54,7 @@ main = do
     exitFailure
 
 unitTests :: [(String, IO ())]
-unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest), ("external-dirs", externalDirsTest), ("linker-flags", linkerFlagsTest)]
+unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest), ("external-dirs", externalDirsTest), ("linker-flags", linkerFlagsTest), ("choose-compilers", chooseCompilersTest)]
 
 runUnitTest :: (String, IO ()) -> IO Bool
 runUnitTest (name, test) = do
@@ -256,6 +257,28 @@ ccFingerprint = do
   assertDiffers "compiler" fp (ccFingerprintOf (changed "gcc" "gcc (GCC) 14.1.0"))
   assertDiffers "linker" fp (ccFingerprintOf (changed "ld" "GNU ld 2.43"))
   assertDiffers "target" fp (ccFingerprintOf (changed "target" "aarch64-linux-gnu"))
+
+-- | The C compiler, C++ compiler and linker for buck2: the user's, else GHC's
+-- if it has absolute paths for them (Nix), else clang, linking with g++.
+chooseCompilersTest :: IO ()
+chooseCompilersTest = do
+  let choose uc ux gc gx = let (c, x, l) = chooseCompilers uc ux gc gx in unwords [c, x, l]
+      nixCc = "/nix/store/aaa-gcc-wrapper/bin/cc"
+      nixCxx = "/nix/store/aaa-gcc-wrapper/bin/c++"
+  assertEqual "GHC's are names" "clang clang++ g++" (choose Nothing Nothing (Just "gcc") (Just "g++"))
+  assertEqual "GHC doesn't say" "clang clang++ g++" (choose Nothing Nothing Nothing Nothing)
+  assertEqual "GHC's are absolute" (unwords [nixCc, nixCxx, nixCxx]) (choose Nothing Nothing (Just nixCc) (Just nixCxx))
+  assertEqual "the user's" "clang clang++ clang++" (choose (Just "clang") (Just "clang++") (Just nixCc) (Just nixCxx))
+  assertEqual "the user's C compiler only" (unwords ["clang", nixCxx, nixCxx]) (choose (Just "clang") Nothing (Just nixCc) (Just nixCxx))
+  -- The C++ compiler that goes with the user's C compiler.
+  let cxxFor cc = fromMaybe "none" (cxxCompilerFor cc)
+  assertEqual "gcc" "g++" (cxxFor "gcc")
+  assertEqual "clang" "clang++" (cxxFor "clang")
+  assertEqual "cc" "/usr/bin/c++" (cxxFor "/usr/bin/cc")
+  assertEqual "versioned clang" "/usr/bin/clang++-18" (cxxFor "/usr/bin/clang-18")
+  assertEqual "prefixed gcc" "x86_64-linux-gnu-g++-13" (cxxFor "x86_64-linux-gnu-gcc-13")
+  assertEqual "already C++" "none" (cxxFor "clang++")
+  assertEqual "unknown" "none" (cxxFor "icx")
 
 -- | Adding, changing and removing the block that @--cache@ puts in a config
 -- file, without touching anything else in it.
