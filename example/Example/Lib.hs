@@ -1,11 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters) where
+module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters, getDataFileContents) where
 
 import Example.Greeters (makeGreeters)
 import Example.Point (Point(..), addPoint)
 import Example.TH (makeGreeter)
 import Safe (headMay)
+import Paths_example
 
 $(makeGreeter "greet")
 
@@ -23,3 +24,7 @@ greetFirst :: [String] -> String
 greetFirst names = case headMay names of
   Just n -> greet n
   Nothing -> "Hello, stranger!"
+
+-- | Test reading the contents of something in data-files
+getDataFileContents :: IO String
+getDataFileContents = readFile =<< getDataFileName "data/data-file.txt"

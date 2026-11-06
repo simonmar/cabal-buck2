@@ -3,6 +3,8 @@ name:               example
 version:            0.1.0.0
 build-type:         Simple
 synopsis:           Exercises TH, hsc2hs and C++/FFI, to test cabal-buck2 and the buck2 support code.
+data-files:
+  data/data-file.txt
 
 -- Example.TH is in a library of its own, and Example.Greeters in the same
 -- library as Example.Lib, so that Example.Lib has splices using both a
@@ -29,6 +31,10 @@ library
   cxx-options: -std=c++17
   extra-libraries: stdc++
   default-language: Haskell2010
+  other-modules:
+    Paths_example
+  autogen-modules:
+    Paths_example
 
 test-suite example-test
   type: exitcode-stdio-1.0
