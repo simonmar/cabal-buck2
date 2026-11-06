@@ -13,6 +13,8 @@
     profiled archives whatever the build mode, rather than their
     non-profiled shared libraries in a dev build
     (see https://github.com/simonmar/haskell-buck2/issues/30)
+  * The mode flags (-O etc.) now come before the package-specific
+    flags (from `ghc-options` etc.) on the GHC command line.
 
 # 0.5.0.0
 
