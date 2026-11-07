@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Example.Lib (addPoints, hello, greet, greetFirst, getDataFileContents)
+import Example.Lib (addPoints, hello, greet, greetFirst, getDataFileContents, embeddedDataFile)
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
@@ -20,6 +20,7 @@ main = do
             , (firstOfEmpty == "Hello, stranger!", "greetFirst (empty): got " ++ show firstOfEmpty)
             , (hello' == "Hello, User!", "hello: got " ++ show hello')
             , (dataContents == "Hello\n", "dataContents: got " ++ dataContents)
+            , (embeddedDataFile == "Hello\n", "embeddedDataFile: got " ++ embeddedDataFile)
             ]
         , not ok
         ]

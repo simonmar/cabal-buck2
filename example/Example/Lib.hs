@@ -1,7 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters, getDataFileContents) where
+module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters, getDataFileContents, embeddedDataFile) where
 
+import Example.Embed (embedDataFile)
 import Example.Greeters (makeGreeters)
 import Example.Point (Point(..), addPoint)
 import Example.TH (makeGreeter)
@@ -28,3 +29,7 @@ greetFirst names = case headMay names of
 -- | Test reading the contents of something in data-files
 getDataFileContents :: IO String
 getDataFileContents = readFile =<< getDataFileName "data/data-file.txt"
+
+-- | Test reading the contents of something in data-files in a splice
+embeddedDataFile :: String
+embeddedDataFile = $(embedDataFile "data/data-file.txt")
