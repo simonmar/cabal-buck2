@@ -467,6 +467,8 @@ sourceDeps project = do
   -- Where it is, is in packages.bzl, with the packages of the project.
   packages <- readIn project ("cabal-buck2" </> "packages.bzl")
   assertContains "cabal-buck2/packages.bzl" "'dep': 'dist-newstyle/src/dep-1.0'," packages
+  -- It needs its data files, and so does what depends on it.
+  assertContains "cabal-buck2/packages.bzl" "DATA_PACKAGES = {\n    'app': [\n        'dep',\n    ],\n    'dep': [\n        'dep',\n    ],\n}" packages
   -- Its data files are recorded, for the tools that read them.
   assertContains depBzlPath "'data/*.txt'" depBzl
   -- hsc2hs is told what it is compiling for.

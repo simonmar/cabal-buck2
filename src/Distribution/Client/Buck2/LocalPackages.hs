@@ -19,6 +19,7 @@ module Distribution.Client.Buck2.LocalPackages
   , localToolTargets
   , localBuildTools
   , wantedBuildTools
+  , packagesWithData
   , projectTestOptions
   ) where
 
@@ -373,6 +374,34 @@ wantedBuildTools pkgs =
     , comp <- PD.pkgBuildableComponents (bpDescription pkg)
     , ExeDependency pn exeName _ <- PD.buildToolDepends (componentBuildInfo comp)
     ]
+
+-- | For each package built from source, the packages with @data-files:@ among
+-- itself and what it depends on, directly or not. Those have to be told where
+-- their files are, whatever part of the package runs their code.
+--
+-- This goes by package rather than by component, so a library also gets the
+-- data files of what only its test-suite depends on: no harm, as they are only
+-- files.
+packagesWithData :: [BuiltPackage] -> Map String [String]
+packagesWithData pkgs =
+  Map.fromList
+    [ (prettyShow name, wanted)
+    | name <- Map.keys descriptions
+    , let wanted = [prettyShow dep | dep <- Set.toList (reachable Set.empty [name]), hasData dep]
+    , not (null wanted)
+    ]
+  where
+    descriptions = Map.fromList [(packageName (bpDescription pkg), bpDescription pkg) | pkg <- pkgs]
+    hasData name = maybe False (not . null . PD.dataFiles) (Map.lookup name descriptions)
+    reachable seen [] = seen
+    reachable seen (name : rest) = case Map.lookup name descriptions of
+      Just desc | not (Set.member name seen) -> reachable (Set.insert name seen) (dependencies desc ++ rest)
+      _ -> reachable seen rest
+    dependencies desc =
+      [ depPkgName dep
+      | comp <- PD.pkgBuildableComponents desc
+      , dep <- PD.targetBuildDepends (componentBuildInfo comp)
+      ]
 
 -- | The project's @test-options:@ for each test-suite that has any - only
 -- the elaborated package knows them (they aren't part of the @.cabal@ file
