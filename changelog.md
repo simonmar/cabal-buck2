@@ -28,6 +28,7 @@
     rather than `.buckconfig`, which is usually committed. A block that
     an earlier version wrote to `.buckconfig` is moved out the next time
     `--cache` or `--no-cache` is given.
+  * `--source-deps` supports cabal.project `source-repository-package`s.
 
 # 0.5.0.0
 

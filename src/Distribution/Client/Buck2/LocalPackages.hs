@@ -162,12 +162,12 @@ data DependencyMode
 
 -- | Real on-disk source directory for any package buck2 builds from
 -- source - a genuinely local one (always 'LocalUnpackedPackage') or an
--- inplace non-local one, resolved the same way
--- 'Distribution.Client.ProjectPlanning.Types.dataDirEnvVarForPackage'
--- does for the same 'BuildInplaceOnly' case: a plain source checkout
--- uses its own path directly, anything fetched as a tarball\/repo was
--- already unpacked to 'distUnpackedSrcDirectory' to be built inplace in
--- the first place.
+-- inplace non-local one, which was unpacked to 'distUnpackedSrcDirectory'
+-- from its tarball (see "Distribution.Client.Buck2.Unpack"). That includes a
+-- @source-repository-package@: what cabal keeps of it is the tarball that it
+-- made of the package in its checkout, not the checkout, whatever
+-- 'Distribution.Client.ProjectPlanning.Types.dataDirEnvVarForPackage' takes it
+-- to be.
 packageSourceDir :: Verbosity -> DistDirLayout -> ElaboratedConfiguredPackage -> IO FilePath
 packageSourceDir verbosity distDirLayout elab = case elabPkgSourceLocation elab of
   LocalUnpackedPackage dir -> return dir
@@ -175,8 +175,8 @@ packageSourceDir verbosity distDirLayout elab = case elabPkgSourceLocation elab 
   LocalTarballPackage{} -> return unpackedPath
   RemoteTarballPackage{} -> return unpackedPath
   RepoTarballPackage{} -> return unpackedPath
-  RemoteSourceRepoPackage _ (Just localCheckout) -> return localCheckout
-  RemoteSourceRepoPackage{} -> unsupported
+  RemoteSourceRepoPackage _ (Just _) -> return unpackedPath
+  RemoteSourceRepoPackage _ Nothing -> unsupported
   where
     unpackedPath = distUnpackedSrcDirectory distDirLayout (elabPkgSourceId elab)
     unsupported =
