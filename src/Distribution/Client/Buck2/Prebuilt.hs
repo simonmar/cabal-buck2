@@ -48,7 +48,8 @@ import System.Directory
   , removeFile
   )
 import System.FilePath
-  ( isAbsolute
+  ( dropTrailingPathSeparator
+  , isAbsolute
   , isPathSeparator
   , joinPath
   , makeRelative
@@ -192,7 +193,7 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan neededUnit
           , rpPicByDefault = case pkgConfigPlatform shared of
               Platform _ OSX -> True
               _ -> False
-          , rpExternal = []
+          , rpExternal = Map.empty
           }
 
   createDirectoryIfMissing True targetDir
@@ -236,7 +237,7 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan neededUnit
   -- say, in which every package is in a store path of its own), they are
   -- reached through a symlink for each directory.
   let external = externalDirs paths (map (takeDirectory . snd) (concatMap libraryFiles packages))
-      paths' = paths{rpExternal = external}
+      paths' = paths{rpExternal = Map.fromList external}
   removeStaleExternal (targetDir </> externalDirName)
   unless (null external) $ do
     notice verbosity $ "cabal buck2: linking " ++ show (length external) ++ " library director" ++ (if length external == 1 then "y" else "ies") ++ " outside GHC's libdir and the cabal store"
@@ -279,7 +280,7 @@ data RepoPaths = RepoPaths
   -- ^ The extension of a shared library, without the dot: @so@, or @dylib@ on macos.
   , rpPicByDefault :: Bool
   -- ^ Whether GHC's code is always position-independent (as on macOS).
-  , rpExternal :: [(FilePath, FilePath)]
+  , rpExternal :: Map FilePath FilePath
   -- ^ Directories that are neither under GHC's libdir nor the cabal store,
   -- and the symlinks (relative to @third-party\/haskell@) to them, which
   -- they are reached through. See 'externalDirs'.
@@ -558,7 +559,7 @@ toRepoRelative paths path
   | otherwise =
       relTo (rpGlobalRootAbs paths) ("ghc-" ++ rpGhcVersion paths) path
         <|> relTo (rpStoreRootAbs paths) "cabal-store" path
-        <|> listToMaybe (mapMaybe (\(dir, link) -> relTo dir link path) (rpExternal paths))
+        <|> listToMaybe [r | dir <- ancestors path, Just link <- [Map.lookup dir (rpExternal paths)], Just r <- [relTo dir link path]]
 
 -- | The directory of the symlinks to the 'externalDirs'.
 externalDirName :: FilePath
@@ -588,8 +589,9 @@ externalDirs :: RepoPaths -> [FilePath] -> [(FilePath, FilePath)]
 externalDirs paths dirs = [(dir, externalDirName </> linkName dir) | dir <- sort maximal]
   where
     outside = ordNub [d | d <- map normalise dirs, isAbsolute d, isNothing (relTo (rpGlobalRootAbs paths) "" d <|> relTo (rpStoreRootAbs paths) "" d)]
-    maximal = [d | d <- outside, not (any (`isProperAncestor` d) outside)]
-    isProperAncestor a d = a /= d && makeRelative a d /= d
+    -- With a set, as there can be thousands of them.
+    outsideSet = Set.fromList outside
+    maximal = [d | d <- outside, not (any (`Set.member` outsideSet) (drop 1 (ancestors d)))]
     linkName dir = takeFileName dir ++ "-" ++ take 12 (showMD5 (md5 (BS8.pack dir)))
 
 -- | Remove the symlinks that an earlier run made.
@@ -597,6 +599,12 @@ removeStaleExternal :: FilePath -> IO ()
 removeStaleExternal dir = do
   exists <- doesPathExist dir
   when exists $ removeDirectoryRecursive dir
+
+-- | The path and each directory above it, normalised, nearest first.
+ancestors :: FilePath -> [FilePath]
+ancestors = go . dropTrailingPathSeparator . normalise
+  where
+    go p = p : (let up = takeDirectory p in if up == p then [] else go up)
 
 relTo :: FilePath -> FilePath -> FilePath -> Maybe FilePath
 relTo root repoRelPrefix path =
