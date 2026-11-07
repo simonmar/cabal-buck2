@@ -8,9 +8,9 @@ name: buck2
 # to be at the commit for this release of cabal-buck2: cabal-buck2 checks that
 # buck2/version.bzl says the release it is.
 #
-# On Linux and macOS (Apple silicon); --source-deps only on Linux, since it
-# builds much more and doesn't test anything platform-specific that the store
-# mode doesn't.
+# On Linux and macOS (Apple silicon); --source-deps of this project only on
+# Linux, since it builds much more and doesn't test anything platform-specific
+# that the store mode doesn't. example/ is small enough to do both everywhere.
 
 # See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
 concurrency:
@@ -164,12 +164,20 @@ jobs:
         run: buck2 test //...
 
   example:
-    name: example (${{ matrix.os }})
+    name: example${{ matrix.args }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # As for the buck2 job: the dependencies built by cabal into its
+        # store, or from source by buck2.
+        mode: [store, source-deps]
+        include:
+          - mode: store
+            args: ""
+          - mode: source-deps
+            args: " --source-deps"
     defaults:
       run:
         shell: bash
@@ -247,23 +255,23 @@ jobs:
         id: cache
         with:
           path: ${{ steps.store.outputs.dir }}
-          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal') }}
-          restore-keys: ${{ steps.get-osver.outputs.osver }}-store-example-
+          key: ${{ steps.get-osver.outputs.osver }}-store-example-${{ matrix.mode }}-${{ hashFiles('dist-newstyle/cache/plan.json', 'example/example.cabal') }}
+          restore-keys: ${{ steps.get-osver.outputs.osver }}-store-example-${{ matrix.mode }}-
 
       - name: Build cabal-buck2
         run: cabal build exe:cabal-buck2
 
       # setup.sh makes buck2/ in example/ the one of this repository, and
       # generates the buck2 build, with the dependencies built with profiling
-      # too (for the prof mode).
+      # too (for the prof mode), and passes on its arguments to cabal-buck2.
       #
       # list-bin has to be run in the root of the repository: example/ is a
       # different project.
-      - name: Generate buck2 build of example/
+      - name: Generate buck2 build of example/ (cabal-buck2${{ matrix.args }})
         run: |
           cp "$(cabal list-bin exe:cabal-buck2)" "$RUNNER_TEMP/cabal-buck2"
           cd example
-          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh
+          CABAL_BUCK2="$RUNNER_TEMP/cabal-buck2" ./setup.sh${{ matrix.args }}
 
       - name: Cache dependencies
         uses: actions/cache/save@v6
