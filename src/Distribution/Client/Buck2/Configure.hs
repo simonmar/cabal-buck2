@@ -46,7 +46,8 @@ import Distribution.Simple.Compiler (PackageDBX (GlobalPackageDB))
 import Distribution.Simple.PackageIndex (InstalledPackageIndex)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Simple.Program.Builtin (builtinPrograms)
-import Distribution.Simple.Program.Db (ProgramDb, configureAllKnownPrograms, configuredPrograms, prependProgramSearchPathNoLogging, restoreProgramDb, updateConfiguredProgs, updateProgram, userSpecifyArgss)
+import Distribution.Simple.Program.Db (ProgramDb, configureAllKnownPrograms, configuredPrograms, modifyProgramSearchPath, prependProgramSearchPathNoLogging, restoreProgramDb, updateConfiguredProgs, updateProgram, userSpecifyArgss)
+import Distribution.Simple.Program.Find (ProgramSearchPathEntry (ProgramSearchPathDefault, ProgramSearchPathDir))
 import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programMonitorFiles, programOverrideEnv, programVersion), simpleConfiguredProgram)
 import Distribution.Simple.Register (generateRegistrationInfo)
 import qualified Distribution.Simple.Setup as Cabal
@@ -66,7 +67,8 @@ import Distribution.Utils.Path (makeSymbolicPath)
 import Distribution.Verbosity (defaultVerbosityHandles)
 
 import System.Directory (canonicalizePath)
-import System.FilePath ((</>))
+import System.Environment (lookupEnv)
+import System.FilePath (splitSearchPath, (</>))
 
 import Distribution.Client.Buck2.LocalPackages (DependencyMode, builtLocalElabs, componentNamesFor, isBuiltLocally, packageSourceDir, planElab)
 import Distribution.Client.Buck2.Schedule (runDependencyGraph)
@@ -107,10 +109,12 @@ localBuildInfoFor
   -> ElaboratedInstallPlan
   -> ElaboratedSharedConfig
   -> InstalledPackageIndex
+  -> [FilePath]
+  -- ^ The directories of the @PATH@.
   -> ProgramsCache
   -> ElaboratedConfiguredPackage
   -> IO LocalBuildInfo
-localBuildInfoFor verbosity mode distDirLayout plan shared ipi programs elab = do
+localBuildInfoFor verbosity mode distDirLayout plan shared ipi pathDirs programs elab = do
   -- Real Cabal's own 'InLibrary.configure' falls back to *searching* the
   -- working directory for a @<pkgname>.cabal@ file whenever
   -- 'Cabal.configCabalFilePath' isn't set (see its own use of
@@ -148,7 +152,7 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi programs elab = d
           prependProgramSearchPathNoLogging
             extraPaths
             []
-            (restoreProgramDb builtinPrograms (pkgConfigCompilerProgs shared))
+            (withPathDirs pathDirs (restoreProgramDb builtinPrograms (pkgConfigCompilerProgs shared)))
       builtTools =
         [ (simpleConfiguredProgram name (FoundOnSystem name)){programVersion = Just (packageVersion depElab)}
         | uid <- elabOrderExeDependencies elab
@@ -269,6 +273,7 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
           | elab <- builtLocalElabs mode plan
           ]
 
+  pathDirs <- maybe [] splitSearchPath <$> lookupEnv "PATH"
   programs <- newMVar Map.empty
   indexVar <- newTVarIO installedIndex
   componentLBIsVar <- newTVarIO Map.empty
@@ -277,13 +282,26 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
     let elab = localElabs Map.! uid
         pkgDesc = elabPkgDescription elab
     idx <- readTVarIO indexVar
-    lbi <- withoutSearchState =<< localBuildInfoFor verbosity mode distDirLayout plan shared idx programs elab
+    lbi <- withoutSearchState =<< localBuildInfoFor verbosity mode distDirLayout plan shared idx pathDirs programs elab
     for_ (componentNamesFor elab pkgDesc) $ \cname -> do
       mipi <- libraryInstalledPackageInfo verbosity lbi pkgDesc cname
       for_ mipi $ \ipi -> atomically $ modifyTVar' indexVar (PackageIndex.insert ipi)
       atomically $ modifyTVar' componentLBIsVar (Map.insert (packageName pkgDesc, cname) lbi)
 
   readTVarIO componentLBIsVar
+
+-- | The program db sets @PATH@ for all of its programs. We switch it from using
+-- @ProgramSearchPathDefault@, which re-does the lookup for every program, to
+-- using an explicit list of directories which we already know.
+-- 
+-- The primary reason for this is memory: re-reading @PATH@ every time leaves
+-- us with many copies of it in memory, significantly increasing allocation on
+-- large projects.
+withPathDirs :: [FilePath] -> ProgramDb -> ProgramDb
+withPathDirs pathDirs = modifyProgramSearchPath (concatMap expand)
+  where
+    expand ProgramSearchPathDefault = map ProgramSearchPathDir pathDirs
+    expand entry = [entry]
 
 -- | A cache of 'ProgramDb's whose programs have all been configured, shared by
 -- every component that this run of @cabal buck2@ configures (see
