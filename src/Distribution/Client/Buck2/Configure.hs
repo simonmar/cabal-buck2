@@ -10,7 +10,7 @@ import Prelude ()
 import qualified Data.Map as Map
 import qualified Data.Map.Strict as Map.Strict
 
-import Control.Concurrent (getNumCapabilities, setNumCapabilities)
+import Control.Concurrent (MVar, getNumCapabilities, modifyMVar, newMVar, setNumCapabilities)
 import Control.Concurrent.STM
   ( atomically
   , modifyTVar'
@@ -46,7 +46,7 @@ import Distribution.Simple.Compiler (PackageDBX (GlobalPackageDB))
 import Distribution.Simple.PackageIndex (InstalledPackageIndex)
 import qualified Distribution.Simple.PackageIndex as PackageIndex
 import Distribution.Simple.Program.Builtin (builtinPrograms)
-import Distribution.Simple.Program.Db (configuredPrograms, prependProgramSearchPathNoLogging, restoreProgramDb, updateConfiguredProgs, updateProgram, userSpecifyArgss)
+import Distribution.Simple.Program.Db (ProgramDb, configureAllKnownPrograms, configuredPrograms, prependProgramSearchPathNoLogging, restoreProgramDb, updateConfiguredProgs, updateProgram, userSpecifyArgss)
 import Distribution.Simple.Program.Types (ProgramLocation (FoundOnSystem), ConfiguredProgram (programMonitorFiles, programOverrideEnv, programVersion), simpleConfiguredProgram)
 import Distribution.Simple.Register (generateRegistrationInfo)
 import qualified Distribution.Simple.Setup as Cabal
@@ -107,9 +107,10 @@ localBuildInfoFor
   -> ElaboratedInstallPlan
   -> ElaboratedSharedConfig
   -> InstalledPackageIndex
+  -> ProgramsCache
   -> ElaboratedConfiguredPackage
   -> IO LocalBuildInfo
-localBuildInfoFor verbosity mode distDirLayout plan shared ipi elab = do
+localBuildInfoFor verbosity mode distDirLayout plan shared ipi programs elab = do
   -- Real Cabal's own 'InLibrary.configure' falls back to *searching* the
   -- working directory for a @<pkgname>.cabal@ file whenever
   -- 'Cabal.configCabalFilePath' isn't set (see its own use of
@@ -147,12 +148,10 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi elab = do
       -- component is configured, but Cabal wants to know that it is there
       -- and of a version that suits: it is told so (the tool is put on the
       -- @PATH@ of the compile actions that use it by buck2).
-      progDb =
-        foldr updateProgram userProgDb builtTools
       userProgDb =
-        userSpecifyArgss (Map.toList (elabProgramArgs elab)) $
+        userSpecifyArgss programArgs $
           prependProgramSearchPathNoLogging
-            (elabExeDependencyPaths elab ++ elabProgramPathExtra elab)
+            extraPaths
             []
             (restoreProgramDb builtinPrograms (pkgConfigCompilerProgs shared))
       builtTools =
@@ -163,6 +162,10 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi elab = do
         , Just (CExeName exe) <- [elabComponentName depElab]
         , let name = unUnqualComponentName exe
         ]
+      extraPaths = elabExeDependencyPaths elab ++ elabProgramPathExtra elab
+      programArgs = Map.toList (elabProgramArgs elab)
+  configured <- configureProgramsOnce verbosity programs (extraPaths, programArgs) userProgDb
+  let progDb = foldr updateProgram configured builtTools
       buildType = PD.buildType (elabPkgDescription elab)
       inputs =
         InLibrary.libraryConfigureInputsFromElabPackage
@@ -262,6 +265,7 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
           | elab <- builtLocalElabs mode plan
           ]
 
+  programs <- newMVar Map.empty
   indexVar <- newTVarIO installedIndex
   componentLBIsVar <- newTVarIO Map.empty
 
@@ -269,13 +273,32 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
     let elab = localElabs Map.! uid
         pkgDesc = elabPkgDescription elab
     idx <- readTVarIO indexVar
-    lbi <- withoutSearchState =<< localBuildInfoFor verbosity mode distDirLayout plan shared idx elab
+    lbi <- withoutSearchState =<< localBuildInfoFor verbosity mode distDirLayout plan shared idx programs elab
     for_ (componentNamesFor elab pkgDesc) $ \cname -> do
       mipi <- libraryInstalledPackageInfo verbosity lbi pkgDesc cname
       for_ mipi $ \ipi -> atomically $ modifyTVar' indexVar (PackageIndex.insert ipi)
       atomically $ modifyTVar' componentLBIsVar (Map.insert (packageName pkgDesc, cname) lbi)
 
   readTVarIO componentLBIsVar
+
+-- | Program dbs with their programs configured, by the extra search path and
+-- the program arguments they were made with.
+type ProgramsCache = MVar (Map ([FilePath], [(String, [String])]) ProgramDb)
+
+-- | The program db with every program it knows of configured. Cabal's
+-- configure would otherwise do that for each component: search the @PATH@
+-- for each program and run it for its version. The result depends only on
+-- the search path and the program arguments, which nearly every component
+-- shares, so it is done once for each. The cache stays locked while a db is
+-- configured, so that components waiting for the same one don't configure
+-- it again.
+configureProgramsOnce :: Verbosity -> ProgramsCache -> ([FilePath], [(String, [String])]) -> ProgramDb -> IO ProgramDb
+configureProgramsOnce verbosity cache key progDb =
+  modifyMVar cache $ \dbs -> case Map.lookup key dbs of
+    Just db -> return (dbs, db)
+    Nothing -> do
+      db <- configureAllKnownPrograms verbosity progDb
+      return (Map.insert key db dbs, db)
 
 -- | The 'LocalBuildInfo' without what each configured program keeps of its
 -- search: the @PATH@ it was found on, as an environment override, and every
