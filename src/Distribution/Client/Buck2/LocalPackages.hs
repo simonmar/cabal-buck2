@@ -375,13 +375,23 @@ wantedBuildTools pkgs =
     , ExeDependency pn exeName _ <- PD.buildToolDepends (componentBuildInfo comp)
     ]
 
--- | For each package built from source, the packages with @data-files:@ among
--- itself and what it depends on, directly or not. Those have to be told where
--- their files are, whatever part of the package runs their code.
+-- | Which packages' data-files each package built from source may need.
 --
--- This goes by package rather than by component, so a library also gets the
--- data files of what only its test-suite depends on: no harm, as they are only
--- files.
+-- The result maps the name of each package to the packages that have
+-- @data-files:@, out of that package itself and all the packages it depends
+-- on, directly or indirectly, that are also built from source. Code from any
+-- of those packages can end up running in one of this package's components,
+-- and its @Paths_\<pkg\>@ module needs to be told where its data-files are.
+-- Packages with no data-files are left out.
+--
+-- This only applies to locally-built packages: prebuilt packages are
+-- assumed to have their data-files installed where their
+-- @Paths_\<pkg\>@ modules already look.
+--
+-- This works per package rather than per component, so a library is also
+-- given the data-files of a package that only its test-suite depends on.
+-- That does no harm: at worst a compile gets an environment variable, and an
+-- input, that it doesn't use.
 packagesWithData :: [BuiltPackage] -> Map String [String]
 packagesWithData pkgs =
   Map.fromList

@@ -97,8 +97,12 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
 -- each package is, as its directory relative to the project root. @buck2\/cabal.bzl@
 -- loads it to find the targets of the packages that a package depends on, and
 -- the paths of its own directory. Nothing in a package's @BUCK.cabal.bzl@ is
--- relative to the project, so only this file changes when a package moves. It
--- says too which packages' data files each package needs ('packagesWithData').
+-- relative to the project, so only this file changes when a package moves.
+--
+-- It also records, in @DATA_PACKAGES@, which packages' data-files each
+-- package needs (see 'packagesWithData'), so that @buck2\/cabal.bzl@ can set
+-- the @\<pkg\>_datadir@ environment variables that tell their @Paths_\<pkg\>@
+-- modules where the files are.
 --
 -- It also passes on the project's own customisation of the generated
 -- targets: the @OVERRIDES@ of a @cabal-buck2.bzl@ in the project root, if
