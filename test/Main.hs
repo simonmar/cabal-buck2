@@ -326,11 +326,13 @@ basic project = do
   assertContains toolsPath "GHC_FINGERPRINT = \"" tools
   assertContains toolsPath "CC_FINGERPRINT = \"" tools
   -- The C tools are run from a directory named by that fingerprint, so that
-  -- it is part of the commands that run them.
+  -- it is part of the commands that run them. (Those that were found: one
+  -- that wasn't, such as clang where it isn't installed, is run by its name.)
   let ccPrint = [takeWhile (/= '"') (drop (length "CC_FINGERPRINT = \"") l) | l <- lines tools, "CC_FINGERPRINT = " `isPrefixOf` l]
   forM_ ccPrint $ \fp ->
-    forM_ ["cc", "cxx", "linker"] $ \role ->
-      assertContains toolsPath ("/toolchain/" ++ role ++ "/" ++ fp ++ "/") tools
+    forM_ [("CC", "cc"), ("CXX", "cxx"), ("LINKER", "linker")] $ \(var, role) ->
+      forM_ [l | l <- lines tools, (var ++ " = ") `isPrefixOf` l, ("/toolchain/" ++ role ++ "/") `isInfixOf` l] $
+        assertContains toolsPath ("/toolchain/" ++ role ++ "/" ++ fp ++ "/")
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
   tools' <- readIn project toolsPath
   assertEqual "tools.bzl after a second run" tools tools'
