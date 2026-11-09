@@ -701,7 +701,7 @@ missingModule project = do
 -- @ghcWithPackages@) are reached through a symlink for each directory.
 externalDirsTest :: IO ()
 externalDirsTest = do
-  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = [], rpDllExtension = "so", rpPicByDefault = False}
+  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = Map.empty, rpDllExtension = "so", rpPicByDefault = False}
       aeson = "/nix/store/aaa-aeson-lib-aeson-2.2.5.1/lib/x86_64-linux-ghc-9.6.7"
       text = "/nix/store/bbb-text-lib-text-2.1.4/lib/x86_64-linux-ghc-9.6.7"
       dirs =
@@ -721,7 +721,7 @@ externalDirsTest = do
   let names = map snd linked
   check "links are in external/" True (all (\n -> take 9 n == "external/") names)
   check "the links are different" 2 (length (nub names))
-  let paths' = paths{rpExternal = linked}
+  let paths' = paths{rpExternal = Map.fromList linked}
       aesonLink = fromMaybe (error "no link for aeson") (lookup aeson linked)
   check "a library in a linked directory" (Just (aesonLink ++ "/aeson-2.2.5.1-X/libHSaeson-2.2.5.1-X.a")) (toRepoRelative paths' (aeson ++ "/aeson-2.2.5.1-X/libHSaeson-2.2.5.1-X.a"))
   check "a library under GHC's libdir" (Just "ghc-9.6.7/x86_64-linux-ghc-9.6.7/base-4.18.3.0/libHSbase.a") (toRepoRelative paths' "/ghc/lib/x86_64-linux-ghc-9.6.7/base-4.18.3.0/libHSbase.a")
