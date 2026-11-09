@@ -5,7 +5,7 @@ module Main (main) where
 
 import Control.Exception (SomeException, bracket, displayException, try)
 import Control.Monad (forM_, unless, when)
-import Data.List (isInfixOf, nub)
+import Data.List (isInfixOf, isPrefixOf, nub)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
@@ -325,6 +325,12 @@ basic project = do
   tools <- readIn project toolsPath
   assertContains toolsPath "GHC_FINGERPRINT = \"" tools
   assertContains toolsPath "CC_FINGERPRINT = \"" tools
+  -- The C tools are run from a directory named by that fingerprint, so that
+  -- it is part of the commands that run them.
+  let ccPrint = [takeWhile (/= '"') (drop (length "CC_FINGERPRINT = \"") l) | l <- lines tools, "CC_FINGERPRINT = " `isPrefixOf` l]
+  forM_ ccPrint $ \fp ->
+    forM_ ["cc", "cxx", "linker"] $ \role ->
+      assertContains toolsPath ("/toolchain/" ++ role ++ "/" ++ fp ++ "/") tools
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
   tools' <- readIn project toolsPath
   assertEqual "tools.bzl after a second run" tools tools'

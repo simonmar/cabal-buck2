@@ -257,10 +257,9 @@ generatePrebuilt verbosity projectRoot cabalDirLayout shared depsPlan neededUnit
   writeBuckFile targetDir paths' packages buildToolPaths localTools
 
   toolchain <- findToolchain verbosity userProgPaths (pkgConfigCompilerProgs shared) compiler
-  toolPaths <- linkToolchain (targetDir </> "toolchain") "third-party/haskell/toolchain" toolchain
-
   fingerprint <- ghcFingerprint compiler globalDB
   ccPrint <- ccFingerprint compiler [("buck2 " ++ role, path) | (role, path) <- [("cc", tcCc toolchain), ("c++", tcCxx toolchain), ("linker", tcLinker toolchain)]]
+  toolPaths <- linkToolchain (targetDir </> "toolchain") "third-party/haskell/toolchain" ccPrint toolchain
   writeToolsFile targetDir ghcVersionStr fingerprint ccPrint ghcDynamic toolPaths (tcCcType toolchain) toolTargets alexPath happyPath
 
   return (Map.keysSet buildToolPaths, map rpInfo packages)

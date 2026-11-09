@@ -15,6 +15,10 @@
     (see https://github.com/simonmar/haskell-buck2/issues/30)
   * The mode flags (-O etc.) now come before the package-specific
     flags (from `ghc-options` etc.) on the GHC command line.
+  * C and C++ targets are rebuilt when `cabal buck2` finds a different
+    C toolchain, with or without an action cache: the C tools are now run
+    from a directory named by the C toolchain's fingerprint
+    (`third-party/haskell/toolchain/<role>/<fingerprint>/`).
 
 # 0.5.0.0
 

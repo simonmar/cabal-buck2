@@ -10,7 +10,11 @@
 -- toolchains run, so that the commands of the build actions, and so the keys
 -- of the action cache, don't depend on where the tools are installed: the
 -- fingerprints of the toolchains (see "Distribution.Client.Buck2.Fingerprint")
--- are what tells different tools apart.
+-- are what tells different tools apart. The C tools' symlinks are in a
+-- directory named by the C toolchain's fingerprint, which so is part of the
+-- command of every action that runs one (see 'linkToolchain'); GHC's
+-- fingerprint is given to its actions in their environment instead (see
+-- @buck2\/toolchains\/defaults.bzl@).
 module Distribution.Client.Buck2.Toolchain
   ( Toolchain (..)
   , findToolchain
@@ -35,7 +39,7 @@ import System.Directory
   , findExecutable
   , listDirectory
   , makeAbsolute
-  , removeFile
+  , removePathForcibly
   )
 import System.FilePath (hasTrailingPathSeparator, isAbsolute, takeDirectory, takeFileName, (</>))
 import System.Process (readProcessWithExitCode)
@@ -195,33 +199,39 @@ compilerType cc = do
 
 -- | Point the symlinks under @dir@ (@third-party\/haskell\/toolchain@) at the
 -- tools, and return the paths, relative to the project root, that the
--- toolchains are to run them by, by role. The symlink to each tool is
--- @dir\/\<role\>\/\<name\>@: it has the tool's own file name, which some
--- tools act on (clang is a C++ compiler as clang++ or c++, say). A tool that
--- wasn't found is left to be looked for on the PATH by its name.
-linkToolchain :: FilePath -> FilePath -> Toolchain -> IO [(String, FilePath)]
-linkToolchain dir dirRel tc =
+-- toolchains are to run them by, by role. The symlink to each of GHC's tools
+-- is @dir\/\<role\>\/\<name\>@, and to each C tool
+-- @dir\/\<role\>\/\<fingerprint\>\/\<name\>@, with the C toolchain's
+-- fingerprint: buck2 runs the C tools from a toolchain that knows nothing of
+-- fingerprints, so it is in their paths, rather than in the environment of
+-- the actions as GHC's is. Each has the tool's own file name, which some tools
+-- act on (clang is a C++ compiler as clang++ or c++, say). A tool that wasn't
+-- found is left to be looked for on the PATH by its name.
+linkToolchain :: FilePath -> FilePath -> String -> Toolchain -> IO [(String, FilePath)]
+linkToolchain dir dirRel ccPrint tc =
   traverse
     link
-    [ ("ghc", tcGhc tc)
-    , ("ghc-pkg", tcGhcPkg tc)
-    , ("hsc2hs", tcHsc2hs tc)
-    , ("haddock", tcHaddock tc)
-    , ("cc", tcCc tc)
-    , ("cxx", tcCxx tc)
-    , ("linker", tcLinker tc)
+    [ ("ghc", [], tcGhc tc)
+    , ("ghc-pkg", [], tcGhcPkg tc)
+    , ("hsc2hs", [], tcHsc2hs tc)
+    , ("haddock", [], tcHaddock tc)
+    , ("cc", [ccPrint], tcCc tc)
+    , ("cxx", [ccPrint], tcCxx tc)
+    , ("linker", [ccPrint], tcLinker tc)
     ]
   where
-    link (role, path)
+    link (role, subdirs, path)
       | isAbsolute path = do
           let roleDir = dir </> role
+              linkDir = foldl' (</>) roleDir subdirs
               name = takeFileName path
           createDirectoryIfMissing True roleDir
           -- The symlink of an earlier run, and the tool of one if it had
           -- another name (dangling, maybe: 'doesPathExist' would say it
-          -- isn't there).
+          -- isn't there), or the directory of another fingerprint.
           olds <- listDirectory roleDir
-          for_ olds $ \o -> removeFile (roleDir </> o)
-          createFileLink path (roleDir </> name)
-          return (role, dirRel ++ "/" ++ role ++ "/" ++ name)
+          for_ olds $ \o -> removePathForcibly (roleDir </> o)
+          createDirectoryIfMissing True linkDir
+          createFileLink path (linkDir </> name)
+          return (role, intercalate "/" ([dirRel, role] ++ subdirs ++ [name]))
       | otherwise = return (role, path)
