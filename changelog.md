@@ -20,6 +20,10 @@
     the packages it depends on that buck2 builds. Haskell rules have a
     `data_dirs` attribute for this, and `cabal-buck2/packages.bzl` has
     `DATA_PACKAGES`.
+  * C and C++ targets are rebuilt when `cabal buck2` finds a different
+    C toolchain, with or without an action cache: the C tools are now run
+    from a directory named by the C toolchain's fingerprint
+    (`third-party/haskell/toolchain/<role>/<fingerprint>/`).
 
 # 0.5.0.0
 

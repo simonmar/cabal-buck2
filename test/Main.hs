@@ -5,7 +5,7 @@ module Main (main) where
 
 import Control.Exception (SomeException, bracket, displayException, try)
 import Control.Monad (forM_, unless, when)
-import Data.List (isInfixOf, nub)
+import Data.List (isInfixOf, isPrefixOf, nub)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
@@ -325,6 +325,14 @@ basic project = do
   tools <- readIn project toolsPath
   assertContains toolsPath "GHC_FINGERPRINT = \"" tools
   assertContains toolsPath "CC_FINGERPRINT = \"" tools
+  -- The C tools are run from a directory named by that fingerprint, so that
+  -- it is part of the commands that run them. (Those that were found: one
+  -- that wasn't, such as clang where it isn't installed, is run by its name.)
+  let ccPrint = [takeWhile (/= '"') (drop (length "CC_FINGERPRINT = \"") l) | l <- lines tools, "CC_FINGERPRINT = " `isPrefixOf` l]
+  forM_ ccPrint $ \fp ->
+    forM_ [("CC", "cc"), ("CXX", "cxx"), ("LINKER", "linker")] $ \(var, role) ->
+      forM_ [l | l <- lines tools, (var ++ " = ") `isPrefixOf` l, ("/toolchain/" ++ role ++ "/") `isInfixOf` l] $
+        assertContains toolsPath ("/toolchain/" ++ role ++ "/" ++ fp ++ "/")
   _ <- buck2 project ["--enable-tests", "--enable-benchmarks", "-f+loud"]
   tools' <- readIn project toolsPath
   assertEqual "tools.bzl after a second run" tools tools'
@@ -696,7 +704,7 @@ missingModule project = do
 -- @ghcWithPackages@) are reached through a symlink for each directory.
 externalDirsTest :: IO ()
 externalDirsTest = do
-  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = [], rpDllExtension = "so", rpPicByDefault = False}
+  let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = Map.empty, rpDllExtension = "so", rpPicByDefault = False}
       aeson = "/nix/store/aaa-aeson-lib-aeson-2.2.5.1/lib/x86_64-linux-ghc-9.6.7"
       text = "/nix/store/bbb-text-lib-text-2.1.4/lib/x86_64-linux-ghc-9.6.7"
       dirs =
@@ -716,7 +724,7 @@ externalDirsTest = do
   let names = map snd linked
   check "links are in external/" True (all (\n -> take 9 n == "external/") names)
   check "the links are different" 2 (length (nub names))
-  let paths' = paths{rpExternal = linked}
+  let paths' = paths{rpExternal = Map.fromList linked}
       aesonLink = fromMaybe (error "no link for aeson") (lookup aeson linked)
   check "a library in a linked directory" (Just (aesonLink ++ "/aeson-2.2.5.1-X/libHSaeson-2.2.5.1-X.a")) (toRepoRelative paths' (aeson ++ "/aeson-2.2.5.1-X/libHSaeson-2.2.5.1-X.a"))
   check "a library under GHC's libdir" (Just "ghc-9.6.7/x86_64-linux-ghc-9.6.7/base-4.18.3.0/libHSbase.a") (toRepoRelative paths' "/ghc/lib/x86_64-linux-ghc-9.6.7/base-4.18.3.0/libHSbase.a")
