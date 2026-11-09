@@ -31,14 +31,14 @@ buck2FlagOptions _ =
   [ option
       []
       ["cache"]
-      "Use the remote action cache at ADDRESS (grpc://host:port), only to look up and store results: nothing is run remotely. Written to .buckconfig; later runs keep using it."
+      "Use the remote action cache at ADDRESS (grpc://host:port), only to look up and store results: nothing is run remotely. Written to .buckconfig.local; later runs keep using it."
       buck2CacheAddress
       (\v f -> f{buck2CacheAddress = v})
       (reqArg "ADDRESS" (succeedReadE toFlag) flagToList)
   , option
       []
       ["no-cache"]
-      "Stop using a remote action cache (removes what --cache added to .buckconfig)."
+      "Stop using a remote action cache (removes what --cache added to .buckconfig.local)."
       buck2NoCache
       (\v f -> f{buck2NoCache = v})
       trueArg

@@ -24,6 +24,10 @@
     C toolchain, with or without an action cache: the C tools are now run
     from a directory named by the C toolchain's fingerprint
     (`third-party/haskell/toolchain/<role>/<fingerprint>/`).
+  * `cabal buck2 --cache` writes its settings to `.buckconfig.local`
+    rather than `.buckconfig`, which is usually committed. A block that
+    an earlier version wrote to `.buckconfig` is moved out the next time
+    `--cache` or `--no-cache` is given.
 
 # 0.5.0.0
 

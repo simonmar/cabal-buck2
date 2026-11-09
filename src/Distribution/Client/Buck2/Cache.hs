@@ -5,7 +5,9 @@
 -- Nothing is run remotely: the cache server (anything that speaks the Bazel
 -- remote execution API's action cache and CAS, such as @bazel-remote@) only
 -- stores results. Turning this on adds a block to the project's
--- @.buckconfig@ (see 'cacheBlock'); the buck2 support code reads
+-- @.buckconfig.local@ (see 'cacheBlock'), which buck2 reads after
+-- @.buckconfig@: the cache is a setting of this checkout, not of the project,
+-- and @.buckconfig@ is usually committed. The buck2 support code reads
 -- @[cabal_buck2] cache@ from it to enable the cache in its execution platform,
 -- and @buck2.default_allow_cache_upload@ to have the C and C++ compiles and
 -- shared-library links uploaded.
@@ -20,16 +22,16 @@ module Distribution.Client.Buck2.Cache
 import Distribution.Client.Compat.Prelude
 import Prelude ()
 
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, removeFile)
 import System.FilePath ((</>))
 
 import Distribution.Simple.Flag (flagToMaybe, fromFlagOrDefault)
-import Distribution.Simple.Utils (die', notice)
+import Distribution.Simple.Utils (notice)
 
 import Distribution.Client.Buck2.Flags (Buck2Flags (..))
 
 data CacheSetting
-  = -- | Leave .buckconfig as it is.
+  = -- | Leave the buckconfig files as they are.
     CacheUnchanged
   | CacheOn String
   | CacheOff
@@ -46,27 +48,37 @@ cacheSetting flags =
     (Nothing, True) -> Right CacheOff
     (Nothing, False) -> Right CacheUnchanged
 
--- | Add, change or remove the cache's block of @.buckconfig@.
+-- | Add, change or remove the cache's block of @.buckconfig.local@ (which is
+-- created for it, if there isn't one, and removed again if nothing else is
+-- left in it). An earlier version put the block in @.buckconfig@: it is
+-- removed from there.
 configureCache :: Verbosity -> FilePath -> CacheSetting -> IO ()
 configureCache _ _ CacheUnchanged = return ()
 configureCache verbosity projectRoot setting = do
-  let path = projectRoot </> ".buckconfig"
-  exists <- doesFileExist path
-  unless exists $ die' verbosity (path ++ " doesn't exist")
-  old <- readFile path
-  let new = spliceBlock (case setting of CacheOn address -> Just (cacheBlock address); _ -> Nothing) old
-  when (new /= old) $ do
-    length old `seq` writeFile path new
+  movedOut <- spliceFile (projectRoot </> ".buckconfig") Nothing
+  changed <- spliceFile (projectRoot </> ".buckconfig.local") (case setting of CacheOn address -> Just (cacheBlock address); _ -> Nothing)
+  when (movedOut || changed) $
     notice verbosity $
       unlines
         [ case setting of
-            CacheOn address -> "cabal buck2: using the action cache at " ++ address ++ " (see .buckconfig)"
+            CacheOn address -> "cabal buck2: using the action cache at " ++ address ++ " (see .buckconfig.local)"
             _ -> "cabal buck2: no longer using an action cache"
         , "cabal buck2: run `buck2 kill` now: a running buck2 daemon keeps using the old settings"
         , "(with a cache address but half of the new settings it retries connecting for ~45s on every build)"
         ]
+  where
+    -- Whether the file changed.
+    spliceFile path block = do
+      exists <- doesFileExist path
+      old <- if exists then readFile path else return ""
+      let new = spliceBlock block old
+      if new == old
+        then return False
+        else do
+          length old `seq` if all isSpace new then removeFile path else writeFile path new
+          return True
 
--- | The lines @cabal buck2 --cache=ADDRESS@ puts in @.buckconfig@, without the
+-- | The lines @cabal buck2 --cache=ADDRESS@ puts in @.buckconfig.local@, without the
 -- markers. @default_allow_cache_upload@ is needed because most actions of
 -- the prelude don't opt in to having their results uploaded, and
 -- @engine_address@ because buck2 won't connect to the cache without it, even

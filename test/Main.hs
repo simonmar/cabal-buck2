@@ -624,30 +624,57 @@ projectOverrides project = do
 cacheConfig :: Project -> IO ()
 cacheConfig project = do
   let buckconfig = ".buckconfig"
+      local = ".buckconfig.local"
+      localPath = projectDir project </> local
       block = "# >>> cabal buck2: cache"
   before <- readIn project buckconfig
   assertNotContains buckconfig block before
+  localBefore <- doesFileExist localPath
+  when localBefore $ failure (local ++ " exists before --cache")
 
+  -- The block goes in .buckconfig.local, which is created for it; the
+  -- project's .buckconfig is left alone.
   out <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
   -- A running buck2 daemon would keep the old settings.
   assertContains "notice" "buck2 kill" out
-  withCache <- readIn project buckconfig
-  assertContains buckconfig "[cabal_buck2]\n  cache = true" withCache
-  assertContains buckconfig "default_allow_cache_upload = true" withCache
-  assertContains buckconfig "action_cache_address = grpc://127.0.0.1:9092" withCache
-  assertContains buckconfig "tls = false" withCache
-  -- What was there is kept.
-  assertContains buckconfig (take 40 before) withCache
+  withCache <- readIn project local
+  assertContains local "[cabal_buck2]\n  cache = true" withCache
+  assertContains local "default_allow_cache_upload = true" withCache
+  assertContains local "action_cache_address = grpc://127.0.0.1:9092" withCache
+  assertContains local "tls = false" withCache
+  afterOn <- readIn project buckconfig
+  assertEqual "the .buckconfig after --cache" before afterOn
 
   -- Later runs leave it alone.
   _ <- buck2 project []
-  again <- readIn project buckconfig
+  again <- readIn project local
   assertEqual "after a run without --cache" withCache again
 
-  -- Removing it restores the original file.
+  -- Removing it removes the file it was the only thing in.
   _ <- buck2 project ["--no-cache"]
-  without <- readIn project buckconfig
-  assertEqual "after --no-cache" before without
+  localAfter <- doesFileExist localPath
+  when localAfter $ failure (local ++ " left behind by --no-cache")
+
+  -- What else is in .buckconfig.local is kept.
+  let mine = "[haskell]\n  compiler_flags = -Wall\n"
+  writeFile localPath mine
+  _ <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  mixed <- readIn project local
+  assertContains local mine mixed
+  assertContains local block mixed
+  _ <- buck2 project ["--no-cache"]
+  mineAgain <- readIn project local
+  assertEqual "after --no-cache" mine mineAgain
+  removeFile localPath
+
+  -- A block that an earlier version put in .buckconfig is moved out.
+  writeFile (projectDir project </> buckconfig) (spliceBlock (Just (cacheBlock "grpc://127.0.0.1:9092")) before)
+  _ <- buck2 project ["--cache=grpc://127.0.0.1:9092"]
+  moved <- readIn project buckconfig
+  assertEqual "the .buckconfig after moving the block out" before moved
+  movedTo <- readIn project local
+  assertContains local "action_cache_address = grpc://127.0.0.1:9092" movedTo
+  _ <- buck2 project ["--no-cache"]
 
   -- Mistakes are reported.
   (badCode, badOut) <- runBuck2 project ["--cache=http://example.org"]

@@ -290,9 +290,12 @@ bazel-remote --dir ~/.cache/buck2 --max_size 20 --grpc_address 127.0.0.1:9092 --
 cabal buck2 --cache=grpc://127.0.0.1:9092
 ```
 
-`--cache` adds a block to `.buckconfig` (between `# >>> cabal buck2: cache`
-and `# <<< cabal buck2: cache <<<`; anything else in the file is left alone),
-which later runs keep. `cabal buck2 --no-cache` removes it. **Run
+`--cache` adds a block to `.buckconfig.local` (between
+`# >>> cabal buck2: cache` and `# <<< cabal buck2: cache <<<`; anything else in
+the file is left alone), which later runs keep. `cabal buck2 --no-cache` removes
+it. `.buckconfig.local` is for the settings of one checkout and isn't usually
+committed (add it to `.gitignore`); a project that wants everyone to use the
+same cache can copy the block into `.buckconfig` instead. **Run
 `buck2 kill` after changing it**: buck2 reads the cache's address when its
 daemon starts, and a daemon that was already running keeps the old settings.
 
