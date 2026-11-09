@@ -6,8 +6,9 @@
 -- remote execution API's action cache and CAS, such as @bazel-remote@) only
 -- stores results. Turning this on adds a block to the project's
 -- @.buckconfig@ (see 'cacheBlock'); the buck2 support code reads
--- @[cabal_buck2] cache@ from it to enable the cache in its execution platform
--- and C\/C++ toolchain.
+-- @[cabal_buck2] cache@ from it to enable the cache in its execution platform,
+-- and @buck2.default_allow_cache_upload@ to have the C and C++ compiles and
+-- shared-library links uploaded.
 module Distribution.Client.Buck2.Cache
   ( CacheSetting (..)
   , cacheSetting
