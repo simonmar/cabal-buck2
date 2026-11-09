@@ -143,11 +143,6 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi programs elab = d
       -- top-level @configure@, which 'InLibrary.configure' skips - so
       -- without this the 'LocalBuildInfo' wouldn't have them, unlike one
       -- from a real @Setup configure@.
-      --
-      -- A tool that buck2 is going to build doesn't exist yet when the
-      -- component is configured, but Cabal wants to know that it is there
-      -- and of a version that suits: it is told so (the tool is put on the
-      -- @PATH@ of the compile actions that use it by buck2).
       userProgDb =
         userSpecifyArgss programArgs $
           prependProgramSearchPathNoLogging
@@ -165,6 +160,15 @@ localBuildInfoFor verbosity mode distDirLayout plan shared ipi programs elab = d
       extraPaths = elabExeDependencyPaths elab ++ elabProgramPathExtra elab
       programArgs = Map.toList (elabProgramArgs elab)
   configured <- configureProgramsOnce verbosity programs (extraPaths, programArgs) userProgDb
+  -- A tool that buck2 is going to build (an alex built from source, say)
+  -- doesn't exist yet when the component is configured. Cabal still wants to
+  -- know that the tool is there and that its version is suitable, so we tell
+  -- it the tool has been found, with the version of the package that buck2
+  -- will build it from. buck2 later puts the tool on the @PATH@ of the
+  -- compile actions that use it.
+  --
+  -- This is done after 'configureProgramsOnce', rather than before, because
+  -- each component has its own built tools, and they don't need searching for.
   let progDb = foldr updateProgram configured builtTools
       buildType = PD.buildType (elabPkgDescription elab)
       inputs =
@@ -281,17 +285,31 @@ configureComponentsConcurrently verbosity mode distDirLayout numJobs plan shared
 
   readTVarIO componentLBIsVar
 
--- | Program dbs with their programs configured, by the extra search path and
--- the program arguments they were made with.
+-- | A cache of 'ProgramDb's whose programs have all been configured, shared by
+-- every component that this run of @cabal buck2@ configures (see
+-- 'configureProgramsOnce'). Each entry is keyed by the extra search path and
+-- the user-specified program arguments that the 'ProgramDb' was made with,
+-- since those are the only parts of it that differ between components.
 type ProgramsCache = MVar (Map ([FilePath], [(String, [String])]) ProgramDb)
 
--- | The program db with every program it knows of configured. Cabal's
--- configure would otherwise do that for each component: search the @PATH@
--- for each program and run it for its version. The result depends only on
--- the search path and the program arguments, which nearly every component
--- shares, so it is done once for each. The cache stays locked while a db is
--- configured, so that components waiting for the same one don't configure
--- it again.
+-- | Configure every program that a 'ProgramDb' knows about, reusing an
+-- earlier result from the cache when there is one.
+--
+-- Without this, Cabal's configure would configure the programs separately
+-- for each component. For every known program, it searches the @PATH@ and
+-- then runs the program to find out its version. In a project with many
+-- components that adds up to a lot of processes, and nearly all of the work
+-- is repeated: the result depends only on the extra search path and the
+-- program arguments, and almost every component has the same ones. So the
+-- programs are configured once for each distinct key, and the other
+-- components get the cached result.
+--
+-- The cache stays locked while a 'ProgramDb' is being configured. That way,
+-- when several components that need the same configuration are configured
+-- concurrently, the first one does the work and the others wait for its
+-- result, rather than all configuring it at the same time. The cost is that
+-- components with different keys can't configure their programs in
+-- parallel either, but there are very few distinct keys.
 configureProgramsOnce :: Verbosity -> ProgramsCache -> ([FilePath], [(String, [String])]) -> ProgramDb -> IO ProgramDb
 configureProgramsOnce verbosity cache key progDb =
   modifyMVar cache $ \dbs -> case Map.lookup key dbs of
