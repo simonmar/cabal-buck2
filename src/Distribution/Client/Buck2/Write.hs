@@ -27,7 +27,7 @@ import Distribution.Types.PackageName (PackageName)
 import Distribution.Simple.Utils (die', notice, warn)
 
 import Distribution.Client.Buck2.Generate
-import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), rootRelativeDir)
+import Distribution.Client.Buck2.LocalPackages (BuiltPackage (..), packagesWithData, rootRelativeDir)
 import Distribution.Client.Buck2.Spec
 import Distribution.Client.Buck2.Starlark
 import Distribution.Client.Buck2.Version (cabalBuck2Version)
@@ -99,6 +99,11 @@ writeAllPackages verbosity projectRoot componentLBIs externalBuildTools projectT
 -- the paths of its own directory. Nothing in a package's @BUCK.cabal.bzl@ is
 -- relative to the project, so only this file changes when a package moves.
 --
+-- It also records, in @DATA_PACKAGES@, which packages' data-files each
+-- package needs (see 'packagesWithData'), so that @buck2\/cabal.bzl@ can set
+-- the @\<pkg\>_datadir@ environment variables that tell their @Paths_\<pkg\>@
+-- modules where the files are.
+--
 -- It also passes on the project's own customisation of the generated
 -- targets: the @OVERRIDES@ of a @cabal-buck2.bzl@ in the project root, if
 -- there is one (see @buck2\/cabal.bzl@).
@@ -117,14 +122,16 @@ writePackagesFile verbosity projectRoot pkgs = do
           , "# adding or removing cabal-buck2.bzl."
           , "#"
           , "# The directory of each package that this project builds, from the root of"
-          , "# the project, and the project's overrides of the generated targets. See"
-          , "# buck2/cabal.bzl."
+          , "# the project, the packages whose data files each one needs, and the"
+          , "# project's overrides of the generated targets. See buck2/cabal.bzl."
           , ""
           ]
             ++ ["load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" | hasOverrides]
             ++ ["", "OVERRIDES = " ++ (if hasOverrides then "_OVERRIDES" else "{}"), ""]
         )
         ++ renderBinding "PACKAGES" (VDict (Map.toList packages))
+        ++ "\n"
+        ++ renderBinding "DATA_PACKAGES" (VDict (Map.toList (strList <$> packagesWithData pkgs)))
     packages =
       Map.fromList
         [ (prettyShow (packageName (bpDescription pkg)), str (rootRelativeDir projectRoot (bpDir pkg)))

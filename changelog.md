@@ -15,6 +15,11 @@
     (see https://github.com/simonmar/haskell-buck2/issues/30)
   * The mode flags (-O etc.) now come before the package-specific
     flags (from `ghc-options` etc.) on the GHC command line.
+  * A package's `data-files` are now found by `getDataFileName` when
+    its code runs in the buck2 build. This includes the data files of
+    the packages it depends on that buck2 builds. Haskell rules have a
+    `data_dirs` attribute for this, and `cabal-buck2/packages.bzl` has
+    `DATA_PACKAGES`.
   * C and C++ targets are rebuilt when `cabal buck2` finds a different
     C toolchain, with or without an action cache: the C tools are now run
     from a directory named by the C toolchain's fingerprint

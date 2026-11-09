@@ -19,6 +19,7 @@ module Distribution.Client.Buck2.LocalPackages
   , localToolTargets
   , localBuildTools
   , wantedBuildTools
+  , packagesWithData
   , projectTestOptions
   ) where
 
@@ -373,6 +374,44 @@ wantedBuildTools pkgs =
     , comp <- PD.pkgBuildableComponents (bpDescription pkg)
     , ExeDependency pn exeName _ <- PD.buildToolDepends (componentBuildInfo comp)
     ]
+
+-- | Which packages' data-files each package built from source may need.
+--
+-- The result maps the name of each package to the packages that have
+-- @data-files:@, out of that package itself and all the packages it depends
+-- on, directly or indirectly, that are also built from source. Code from any
+-- of those packages can end up running in one of this package's components,
+-- and its @Paths_\<pkg\>@ module needs to be told where its data-files are.
+-- Packages with no data-files are left out.
+--
+-- This only applies to locally-built packages: prebuilt packages are
+-- assumed to have their data-files installed where their
+-- @Paths_\<pkg\>@ modules already look.
+--
+-- This works per package rather than per component, so a library is also
+-- given the data-files of a package that only its test-suite depends on.
+-- That does no harm: at worst a compile gets an environment variable, and an
+-- input, that it doesn't use.
+packagesWithData :: [BuiltPackage] -> Map String [String]
+packagesWithData pkgs =
+  Map.fromList
+    [ (prettyShow name, wanted)
+    | name <- Map.keys descriptions
+    , let wanted = [prettyShow dep | dep <- Set.toList (reachable Set.empty [name]), hasData dep]
+    , not (null wanted)
+    ]
+  where
+    descriptions = Map.fromList [(packageName (bpDescription pkg), bpDescription pkg) | pkg <- pkgs]
+    hasData name = maybe False (not . null . PD.dataFiles) (Map.lookup name descriptions)
+    reachable seen [] = seen
+    reachable seen (name : rest) = case Map.lookup name descriptions of
+      Just desc | not (Set.member name seen) -> reachable (Set.insert name seen) (dependencies desc ++ rest)
+      _ -> reachable seen rest
+    dependencies desc =
+      [ depPkgName dep
+      | comp <- PD.pkgBuildableComponents desc
+      , dep <- PD.targetBuildDepends (componentBuildInfo comp)
+      ]
 
 -- | The project's @test-options:@ for each test-suite that has any - only
 -- the elaborated package knows them (they aren't part of the @.cabal@ file

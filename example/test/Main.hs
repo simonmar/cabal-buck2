@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Example.Lib (addPoints, hello, greet, greetFirst)
+import Example.Lib (addPoints, hello, greet, greetFirst, getDataFileContents, embeddedDataFile)
 import System.Exit (exitFailure, exitSuccess)
 
 main :: IO ()
@@ -8,6 +8,7 @@ main = do
   let greeting = greet "World"
       hello' = hello "User"
   total <- addPoints 3 4
+  dataContents <- getDataFileContents
   let firstOf = greetFirst ["Alice", "Bob"]
       firstOfEmpty = greetFirst []
       failures =
@@ -18,6 +19,8 @@ main = do
             , (firstOf == "Hello, Alice!", "greetFirst: got " ++ show firstOf)
             , (firstOfEmpty == "Hello, stranger!", "greetFirst (empty): got " ++ show firstOfEmpty)
             , (hello' == "Hello, User!", "hello: got " ++ show hello')
+            , (dataContents == "Hello\n", "dataContents: got " ++ dataContents)
+            , (embeddedDataFile == "Hello\n", "embeddedDataFile: got " ++ embeddedDataFile)
             ]
         , not ok
         ]
