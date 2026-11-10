@@ -18,9 +18,10 @@ $(makeGreeters ["hello"])
 
 addPoints :: Int -> Int -> IO Int
 addPoints x y = do
-  -- 'box' comes from the source-repository-pacakge acme-box. It is
-  -- defined as 'box = pure ()' and does nothing except for testing
-  -- that source-repository-packages work correctly.
+  -- 'box' comes from acme-box, which cabal.project brings in as a
+  -- source-repository-package. It is defined as 'box = pure ()', so it
+  -- does nothing: it is only here to test that a
+  -- source-repository-package is built and linked correctly.
   box
   addPoint (Point (fromIntegral x) (fromIntegral y))
 

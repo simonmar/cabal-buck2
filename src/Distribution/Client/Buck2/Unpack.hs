@@ -31,10 +31,15 @@ import qualified Data.ByteString.Lazy as LBS
 
 -- | Fetch (if not already downloaded) and unpack the source of each given
 -- package to where an inplace build of it would find it (under
--- 'distUnpackedSrcDirectory'). That of a @source-repository-package@ is a
--- tarball too: cabal makes one of the package in its checkout (with sdist), and
--- builds from that. A package in a user-managed local directory needs no
--- unpacking and is left alone.
+-- 'distUnpackedSrcDirectory').
+--
+-- A @source-repository-package@ is unpacked from a tarball too. Cabal clones
+-- the repository, makes an sdist tarball of the package in the checkout, and
+-- builds from that tarball rather than from the checkout itself, so we do the
+-- same.
+--
+-- A package in a user-managed local directory needs no unpacking and is left
+-- alone.
 unpackInplaceSources
   :: Verbosity
   -> DistDirLayout
@@ -73,9 +78,16 @@ unpackInplaceSources verbosity distDirLayout sharedConfig withRepoCtx pkgs =
 -- tarball has already been unpacked there. If the index has a newer revision of
 -- the @.cabal@ file than the tarball, that's the one used.
 --
--- Which tarball was unpacked is recorded by its hash: that of a
--- @source-repository-package@ changes when its tag does, though its version,
--- and so where it is unpacked, stays the same.
+-- To tell whether the tarball has already been unpacked, we record its hash in
+-- a stamp file when we unpack it. Checking that the directory exists isn't
+-- enough. The directory is named after the package's version, and when the
+-- @tag:@ of a @source-repository-package@ changes, the version usually
+-- doesn't. So the directory would still be there, with the source of the old
+-- tag in it. When the hash doesn't match, we delete the directory and unpack
+-- the new tarball.
+--
+-- This relies on cabal making the same tarball each time from the same
+-- checkout, which it does: its sdist tarballs are reproducible.
 unpackTarball
   :: Verbosity
   -> DistDirLayout
@@ -115,6 +127,10 @@ unpackTarball verbosity distDirLayout tarball pkgid cabalFileOverride buildDir =
     let shippedDist = srcdir </> "dist"
     shippedDistExists <- doesDirectoryExist shippedDist
     when shippedDistExists $ do
+      -- If the package is being unpacked again (because its tarball
+      -- changed), the build directory has the old tarball's @dist@ in it.
+      -- 'renameDirectory' won't replace a directory that isn't empty, so
+      -- remove it first.
       buildDirExists <- doesDirectoryExist buildDir
       when buildDirExists $ removeDirectoryRecursive buildDir
       renameDirectory shippedDist buildDir

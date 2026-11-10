@@ -8,9 +8,10 @@ name: buck2
 # to be at the commit for this release of cabal-buck2: cabal-buck2 checks that
 # buck2/version.bzl says the release it is.
 #
-# On Linux and macOS (Apple silicon); --source-deps of this project only on
-# Linux, since it builds much more and doesn't test anything platform-specific
-# that the store mode doesn't. example/ is small enough to do both everywhere.
+# The jobs run on Linux and on macOS (Apple silicon). For this project itself,
+# --source-deps is tested on Linux only: it builds much more, and it doesn't
+# test anything platform-specific that the store mode doesn't. example/ is
+# small enough to test both ways on both platforms.
 
 # See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
 concurrency:
@@ -170,8 +171,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # As for the buck2 job: the dependencies built by cabal into its
-        # store, or from source by buck2.
+        # Like the buck2 job, test both ways of building the dependencies:
+        # by cabal into its store (store), or by buck2 from their source
+        # (source-deps).
         mode: [store, source-deps]
         include:
           - mode: store
