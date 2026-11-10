@@ -29,6 +29,10 @@
     an earlier version wrote to `.buckconfig` is moved out the next time
     `--cache` or `--no-cache` is given.
   * `--source-deps` supports cabal.project `source-repository-package`s.
+  * The Buck2 support code now comes with `cabal-buck2`. If the project
+    has no `buck2/` directory, `cabal buck2` creates one from its own
+    copy, and replaces it after an upgrade. A git checkout of
+    haskell-buck2 in `buck2/` still works as before.
 
 # 0.5.0.0
 

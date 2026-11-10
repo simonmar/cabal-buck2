@@ -86,7 +86,7 @@ import Distribution.Client.Buck2.LocalPackages
   )
 import Distribution.Client.Buck2.Prebuilt (generatePrebuilt)
 import Distribution.Client.Buck2.Setup
-  ( checkBuck2Prelude
+  ( ensureBuck2Dir
   , ensureBuckconfigAndPackage
   )
 import Distribution.Client.Buck2.Write (writeAllPackages)
@@ -155,7 +155,7 @@ buck2Action flags extraArgs globalFlags = do
         ScriptContext path exemeta -> updateContextAndWriteProjectFile ctx path exemeta
 
       let projectRoot = distProjectRootDirectory (distDirLayout baseCtx)
-      checkBuck2Prelude verbosity projectRoot
+      ensureBuck2Dir verbosity projectRoot
 
       builtCtx <- buildDependencies verbosity mode baseCtx targetSelectors
       (plan, customSetups) <-
