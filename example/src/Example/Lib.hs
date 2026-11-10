@@ -2,6 +2,7 @@
 
 module Example.Lib (hello, greet, addPoints, greetFirst, makeGreeters, getDataFileContents, embeddedDataFile) where
 
+import Acme.Box (box)
 import Example.Embed (embedDataFile)
 import Example.Greeters (makeGreeters)
 import Example.Point (Point(..), addPoint)
@@ -16,7 +17,13 @@ $(makeGreeter "greet")
 $(makeGreeters ["hello"])
 
 addPoints :: Int -> Int -> IO Int
-addPoints x y = addPoint (Point (fromIntegral x) (fromIntegral y))
+addPoints x y = do
+  -- 'box' comes from acme-box, which cabal.project brings in as a
+  -- source-repository-package. It is defined as 'box = pure ()', so it
+  -- does nothing: it is only here to test that a
+  -- source-repository-package is built and linked correctly.
+  box
+  addPoint (Point (fromIntegral x) (fromIntegral y))
 
 -- | Uses the `safe` package (not a GHC boot library) so that
 -- gen-haskell-prebuilt.py has at least one real cabal-store package to

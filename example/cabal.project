@@ -1,3 +1,8 @@
 packages: .
 
 tests: True
+
+source-repository-package
+  type: git
+  location: https://github.com/drwebb/acme-box
+  tag: 66287bed2cb50143f9609f61c480bbf28f6d5959

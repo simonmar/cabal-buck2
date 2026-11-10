@@ -160,14 +160,18 @@ data DependencyMode
     DependenciesFromSource
   deriving (Eq)
 
--- | Real on-disk source directory for any package buck2 builds from
--- source - a genuinely local one (always 'LocalUnpackedPackage') or an
--- inplace non-local one, resolved the same way
--- 'Distribution.Client.ProjectPlanning.Types.dataDirEnvVarForPackage'
--- does for the same 'BuildInplaceOnly' case: a plain source checkout
--- uses its own path directly, anything fetched as a tarball\/repo was
--- already unpacked to 'distUnpackedSrcDirectory' to be built inplace in
--- the first place.
+-- | The directory on disk that holds the source of a package that buck2
+-- builds from source. For a package that is local to the project, that is
+-- always a 'LocalUnpackedPackage' directory. Any other package was unpacked
+-- from its tarball to 'distUnpackedSrcDirectory' (see
+-- "Distribution.Client.Buck2.Unpack").
+--
+-- That includes a @source-repository-package@. Its location holds the path
+-- of the sdist tarball that cabal made from the checkout, not the path of the
+-- checkout, so it was unpacked like any other tarball. Beware that
+-- 'Distribution.Client.ProjectPlanning.Types.dataDirEnvVarForPackage' in
+-- cabal-install uses that path as if it were the checkout directory, so it
+-- isn't a good model to follow here.
 packageSourceDir :: Verbosity -> DistDirLayout -> ElaboratedConfiguredPackage -> IO FilePath
 packageSourceDir verbosity distDirLayout elab = case elabPkgSourceLocation elab of
   LocalUnpackedPackage dir -> return dir
@@ -175,8 +179,8 @@ packageSourceDir verbosity distDirLayout elab = case elabPkgSourceLocation elab 
   LocalTarballPackage{} -> return unpackedPath
   RemoteTarballPackage{} -> return unpackedPath
   RepoTarballPackage{} -> return unpackedPath
-  RemoteSourceRepoPackage _ (Just localCheckout) -> return localCheckout
-  RemoteSourceRepoPackage{} -> unsupported
+  RemoteSourceRepoPackage _ (Just _) -> return unpackedPath
+  RemoteSourceRepoPackage _ Nothing -> unsupported
   where
     unpackedPath = distUnpackedSrcDirectory distDirLayout (elabPkgSourceId elab)
     unsupported =
