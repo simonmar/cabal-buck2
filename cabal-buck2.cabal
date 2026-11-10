@@ -8,6 +8,7 @@ version:            0.6.0.0
 --   - push the changes to the master branch of cabal-buck2
 --   - create a branch A.B.C.D on haskell-buck2
 --   - push an update to `version.bzl` for A.B.C.D on that branch
+--   - update the buck2 submodule to that branch (the sdist includes it)
 --   - cabal install locally, and check it on a local repo
 --   - wait for CI on cabal-buck2
 --   - cabal sdist, cabal upload, check the candidate
@@ -44,6 +45,131 @@ extra-source-files:
   test/fixtures/**/.gitkeep
   test/fixtures/**/PACKAGE
   test/fixtures/**/*.txt
+
+-- The buck2 support code (the haskell-buck2 submodule in buck2/), which
+-- `cabal buck2` copies into a project that doesn't have a buck2/ directory.
+-- Its tests, its CI and documentation images aren't needed, and neither are
+-- the tests of the prelude's Android tooling, which are most of its size.
+--
+-- A wildcard has to have an extension, so there is a pattern for each kind
+-- of file. The data-files test (in test/Main.hs) checks that the patterns
+-- match the files of the submodule, apart from those left out.
+data-files:
+  buck2/**/*.CommandLineProcessor
+  buck2/**/*.CompilerPluginRegistrar
+  buck2/**/*.ExperimentConfigService
+  buck2/**/*.Extension
+  buck2/**/*.KotlinCDLogger
+  buck2/**/*.bat
+  buck2/**/*.broken_json
+  buck2/**/*.bzl
+  buck2/**/*.config
+  buck2/**/*.cpp
+  buck2/**/*.erl
+  buck2/**/*.exe
+  buck2/**/*.go
+  buck2/**/*.hrl
+  buck2/**/*.in
+  buck2/**/*.json
+  buck2/**/*.m
+  buck2/**/*.mobileprovision
+  buck2/**/*.props
+  buck2/**/*.proto
+  buck2/**/*.pyi
+  buck2/**/*.rs
+  buck2/**/*.src
+  buck2/**/*.template
+  buck2/**/*.yaml
+  buck2/**/HelloWorld
+  buck2/**/LICENSE
+  buck2/**/LICENSE-APACHE
+  buck2/**/LICENSE-MIT
+  buck2/**/Makefile
+  buck2/**/README
+  buck2/**/hmaptool
+  buck2/**/xcode_version_checker
+  buck2/*.sh
+  buck2/BUCK
+  buck2/README.md
+  buck2/constraints/**/BUCK
+  buck2/platforms/**/BUCK
+  buck2/prelude/**/*.bxl
+  buck2/prelude/**/*.c
+  buck2/prelude/**/*.h
+  buck2/prelude/**/*.hs
+  buck2/prelude/**/*.md
+  buck2/prelude/.buckconfig
+  buck2/prelude/BUCK
+  buck2/prelude/abi/**/BUCK
+  buck2/prelude/android/**/*.java
+  buck2/prelude/android/**/*.py
+  buck2/prelude/android/**/BUCK
+  buck2/prelude/apple/**/*.plist
+  buck2/prelude/apple/**/*.py
+  buck2/prelude/apple/**/BUCK
+  buck2/prelude/build_mode/**/BUCK
+  buck2/prelude/cfg/**/BUCK
+  buck2/prelude/cpu/**/BUCK
+  buck2/prelude/cxx/**/*.py
+  buck2/prelude/cxx/**/*.sh
+  buck2/prelude/cxx/**/BUCK
+  buck2/prelude/erlang/**/*.sh
+  buck2/prelude/erlang/**/BUCK
+  buck2/prelude/git/**/*.py
+  buck2/prelude/git/**/BUCK
+  buck2/prelude/go/**/BUCK
+  buck2/prelude/go_bootstrap/**/*.py
+  buck2/prelude/go_bootstrap/**/BUCK
+  buck2/prelude/haskell/**/*.py
+  buck2/prelude/haskell/**/BUCK
+  buck2/prelude/http_archive/**/BUCK
+  buck2/prelude/ide_integrations/**/*.py
+  buck2/prelude/ide_integrations/**/BUCK
+  buck2/prelude/java/**/*.py
+  buck2/prelude/java/**/BUCK
+  buck2/prelude/js/**/*.py
+  buck2/prelude/js/**/BUCK
+  buck2/prelude/julia/**/*.py
+  buck2/prelude/julia/**/BUCK
+  buck2/prelude/kotlin/**/*.java
+  buck2/prelude/kotlin/**/*.py
+  buck2/prelude/kotlin/**/BUCK
+  buck2/prelude/os/**/BUCK
+  buck2/prelude/os_lookup/**/BUCK
+  buck2/prelude/platforms/**/BUCK
+  buck2/prelude/python/**/*.py
+  buck2/prelude/python/**/*.sh
+  buck2/prelude/python/**/BUCK
+  buck2/prelude/runtime/**/BUCK
+  buck2/prelude/rust/**/*.py
+  buck2/prelude/rust/**/BUCK
+  buck2/prelude/test/**/*.py
+  buck2/prelude/test/**/BUCK
+  buck2/prelude/third-party/**/*.py
+  buck2/prelude/third-party/**/BUCK
+  buck2/prelude/toolchains/android/BUCK
+  buck2/prelude/toolchains/android/android/**/*.java
+  buck2/prelude/toolchains/android/android/**/BUCK
+  buck2/prelude/toolchains/android/config/**/BUCK
+  buck2/prelude/toolchains/android/src/**/*.jar
+  buck2/prelude/toolchains/android/src/**/*.java
+  buck2/prelude/toolchains/android/src/**/*.kt
+  buck2/prelude/toolchains/android/src/**/BUCK
+  buck2/prelude/toolchains/android/third-party/**/BUCK
+  buck2/prelude/toolchains/android/tools/**/BUCK
+  buck2/prelude/toolchains/apple/**/*.plist
+  buck2/prelude/toolchains/apple/**/BUCK
+  buck2/prelude/toolchains/conan/**/*.py
+  buck2/prelude/toolchains/conan/**/BUCK
+  buck2/prelude/toolchains/cxx/**/BUCK
+  buck2/prelude/toolchains/msvc/**/*.py
+  buck2/prelude/toolchains/msvc/**/BUCK
+  buck2/prelude/windows/**/BUCK
+  buck2/prelude/zip_file/**/*.py
+  buck2/prelude/zip_file/**/BUCK
+  buck2/template/**/PACKAGE
+  buck2/template/.buckconfig
+  buck2/toolchains/**/BUCK
 
 homepage:            https://github.com/simonmar/cabal-buck2
 bug-reports:         https://github.com/simonmar/cabal-buck2/issues

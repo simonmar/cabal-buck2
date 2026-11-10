@@ -19,16 +19,32 @@ cabal install cabal-buck2
 Then in the root of your project or package:
 
 ```
-git clone https://github.com/simonmar/haskell-buck2.git buck2 -b <version>
 cabal buck2 --enable-tests
 ```
 
-Where `<version>` is the version of `cabal-buck2`,
-e.g. `0.2.0.0`. Checking out the branch ensures that you get a
-compatible copy of the Buck2 support code. `cabal buck2` checks that
-`buck2/` is for its release (the `CABAL_BUCK2_VERSION` in
-`buck2/version.bzl`), and so does buck2 when it reads the files that
-`cabal buck2` generated, and the error says which branch to switch to.
+The first time, this creates a `buck2/` directory with the Buck2
+support code (the rules for Haskell and the Buck2 prelude). It is
+copied from the copy that was installed with `cabal-buck2`, so it is
+always the right version for the `cabal-buck2` you have. When you
+upgrade `cabal-buck2`, the next `cabal buck2` replaces `buck2/` with
+the new version. You probably want to add `buck2/` to your
+`.gitignore`.
+
+If you want to change the support code, or use a version of it that
+isn't released yet, you can use a git checkout of the corresponding
+branch of [haskell-buck2](https://github.com/simonmar/haskell-buck2)
+instead:
+
+```
+git clone https://github.com/simonmar/haskell-buck2.git buck2 -b <version>
+```
+
+Where `<version>` is the version of `cabal-buck2`, e.g. `0.6.0.0`.
+`cabal buck2` never replaces a `buck2/` that it didn't create
+itself. Instead it checks that `buck2/` is for its release (the
+`CABAL_BUCK2_VERSION` in `buck2/version.bzl`), and so does buck2 when
+it reads the files that `cabal buck2` generated. If they don't match,
+the error says which branch to switch to.
 
 Then you can use `buck2` as the build tool, e.g.
 

@@ -4,16 +4,20 @@
 module Main (main) where
 
 import Control.Exception (SomeException, bracket, displayException, try)
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM, forM_, unless, when)
 import Data.List (isInfixOf, isPrefixOf, nub)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import System.Directory
   ( copyFile
   , createDirectoryIfMissing
   , doesDirectoryExist
   , doesFileExist
+  , doesPathExist
+  , executable
+  , getPermissions
   , removeFile
   , findExecutable
   , getTemporaryDirectory
@@ -25,7 +29,7 @@ import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..), exitFailure)
 import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
-import System.Process (CreateProcess (..), callProcess, getCurrentPid, proc, readCreateProcessWithExitCode)
+import System.Process (CreateProcess (..), callProcess, getCurrentPid, proc, readCreateProcessWithExitCode, readProcess)
 
 import Distribution.Client.Buck2.Cache (cacheBlock, spliceBlock)
 import Distribution.Client.Buck2.Fingerprint (ccFingerprintOf, fingerprintOf)
@@ -33,6 +37,11 @@ import Distribution.Client.Buck2.Prebuilt (RepoPaths (..), externalDirs, prebuil
 import Distribution.Client.Buck2.Toolchain (chooseCompilers, cxxCompilerFor)
 import Distribution.Client.Buck2.Version (cabalBuck2Version)
 import Distribution.InstalledPackageInfo (InstalledPackageInfo (..), emptyInstalledPackageInfo)
+import Distribution.PackageDescription (dataFiles, packageDescription, specVersion)
+import Distribution.Simple.Glob (matchDirFileGlob)
+import Distribution.Simple.PackageDescription (readGenericPackageDescription)
+import Distribution.Utils.Path (getSymbolicPath, makeSymbolicPath)
+import Distribution.Verbosity (defaultVerbosityHandles, mkVerbosity, silent)
 
 main :: IO ()
 main = do
@@ -54,7 +63,7 @@ main = do
     exitFailure
 
 unitTests :: [(String, IO ())]
-unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest), ("external-dirs", externalDirsTest), ("linker-flags", linkerFlagsTest), ("choose-compilers", chooseCompilersTest)]
+unitTests = [("fingerprint", fingerprint), ("cc-fingerprint", ccFingerprint), ("splice-block", spliceBlockTest), ("external-dirs", externalDirsTest), ("linker-flags", linkerFlagsTest), ("choose-compilers", chooseCompilersTest), ("data-files", dataFilesTest)]
 
 runUnitTest :: (String, IO ()) -> IO Bool
 runUnitTest (name, test) = do
@@ -75,6 +84,7 @@ tests =
   , ("custom-setup", customSetup)
   , ("reexports", reexports)
   , ("buck2-version", buck2Version)
+  , ("buck2-unpack", buck2Unpack)
   , ("project-overrides", projectOverrides)
   , ("pkgconfig", pkgconfig)
   , ("project-overrides", projectOverrides)
@@ -143,6 +153,7 @@ runTest exe (name, test) = do
       "disabled-stanzas" -> "basic"
       "cache-config" -> "basic"
       "buck2-version" -> "basic"
+      "buck2-unpack" -> "basic"
       "project-overrides" -> "basic"
       _ -> name
     setup dir = do
@@ -575,6 +586,40 @@ buck2Version project = do
   _ <- buck2 project []
   return ()
 
+-- | A project without a buck2/ directory gets a copy of the one that was
+-- installed with cabal-buck2. That copy is replaced when a different release
+-- of cabal-buck2 runs.
+--
+-- The test does nothing when buck2 runs it (see BUCK), because then the data
+-- files of cabal-buck2 don't include the support code. In this project,
+-- buck2/ is a buck2 package of its own and buck2/prelude is a separate cell,
+-- and the glob that collects the data files of the root package doesn't look
+-- inside either of them.
+buck2Unpack :: Project -> IO ()
+buck2Unpack project = do
+  dataDir <- lookupEnv "cabal_buck2_datadir"
+  available <- maybe (return True) (\d -> doesFileExist (d </> "buck2" </> "version.bzl")) dataDir
+  when available $ buck2UnpackTest project
+
+buck2UnpackTest :: Project -> IO ()
+buck2UnpackTest project = do
+  let dir = projectDir project </> "buck2"
+      checkVersion what = do
+        version <- readIn project ("buck2" </> "version.bzl")
+        assertContains what ("CABAL_BUCK2_VERSION = \"" ++ cabalBuck2Version ++ "\"") version
+  removeDirectoryRecursive dir
+  _ <- buck2 project []
+  checkVersion "unpacked buck2/version.bzl"
+  isExe <- executable <$> getPermissions (dir </> "run_test.sh")
+  unless isExe $ failure "buck2/run_test.sh was unpacked without its executable permission"
+
+  writeBuck2Version (projectDir project) "0.0.0.1"
+  writeFile (dir </> "stale") ""
+  _ <- buck2 project []
+  checkVersion "replaced buck2/version.bzl"
+  stale <- doesFileExist (dir </> "stale")
+  when stale $ failure "buck2/ for another release was not replaced"
+
 -- | A package with a @Custom@ build type needs its @Setup.hs@ to be run, which
 -- is not done: it, and what depends on it, can't be built.
 customSetup :: Project -> IO ()
@@ -729,6 +774,56 @@ missingModule project = do
 
 -- | Libraries outside GHC's libdir and the cabal store (as in a Nix
 -- @ghcWithPackages@) are reached through a symlink for each directory.
+-- | The data-files of cabal-buck2.cabal are the files of the haskell-buck2
+-- submodule (buck2/) that cabal-buck2 copies into a project. They should be
+-- all of the submodule's files apart from those that 'notShipped' leaves out.
+-- When this fails because of a new file in the submodule, the file probably
+-- needs a pattern of its own: a pattern can't match every kind of file.
+--
+-- It also checks that every executable file that is shipped starts with @#!@,
+-- because that is how the copy in a project gets its executable permission
+-- back (Cabal installs data files without it).
+--
+-- This needs the git checkout of the submodule, so it does nothing in an
+-- unpacked sdist.
+dataFilesTest :: IO ()
+dataFilesTest = do
+  checkout <- (&&) <$> doesFileExist "cabal-buck2.cabal" <*> doesPathExist ("buck2" </> ".git")
+  when checkout $ do
+    gpd <- readGenericPackageDescription verbosity Nothing (makeSymbolicPath "cabal-buck2.cabal")
+    let pd = packageDescription gpd
+    matched <- concat <$> mapM (matchDirFileGlob verbosity (specVersion pd) Nothing) (dataFiles pd)
+    -- Each line is "<mode> <object> <stage>\t<path>".
+    entries <- map (break (== '\t')) . lines <$> readProcess "git" ["-C", "buck2", "ls-files", "--stage"] ""
+    let tracked = [(path, takeWhile (/= ' ') mode) | (mode, _ : path) <- entries, not (notShipped path)]
+        expected = Set.fromList ["buck2" </> path | (path, _) <- tracked]
+        shipped = Set.fromList (map getSymbolicPath matched)
+        unmatched = Set.toList (expected `Set.difference` shipped)
+        unwanted = Set.toList (shipped `Set.difference` expected)
+    unless (null unmatched) $ failure ("files of buck2/ that no data-files pattern matches:\n" ++ unlines unmatched)
+    unless (null unwanted) $ failure ("data-files that should be left out:\n" ++ unlines unwanted)
+    scripts <- forM [path | (path, "100755") <- tracked, path `notElem` notScripts] $ \path -> do
+      start <- BS8.take 2 <$> BS8.readFile ("buck2" </> path)
+      return (path, start == BS8.pack "#!")
+    let noShebang = [path | (path, False) <- scripts]
+    unless (null noShebang) $ failure ("executable files of buck2/ that don't start with #!:\n" ++ unlines noShebang)
+  where
+    verbosity = mkVerbosity defaultVerbosityHandles silent
+    notShipped path =
+      path `elem` ["flake.nix", "flake.lock", "perf-chart.svg", "CLAUDE.md", ".gitignore", "prelude/.gitignore", "prelude/toolchains/apple/xcode_version_checker/.gitignore"]
+        || any (`isPrefixOf` path) ["tests/", ".github/", "prelude/toolchains/android/test/", "prelude/ide_integrations/visual_studio/assets/"]
+    -- These are executable in git, but nothing that builds Haskell runs them.
+    -- The Python ones are the main modules of python_bootstrap_binary
+    -- targets, which run them with the Python interpreter. The others are
+    -- used only when building or testing Java or Apple code.
+    notScripts =
+      [ "prelude/apple/tools/selective_debugging/test_resources/HelloWorld"
+      , "prelude/git/tools/git_fetch.py"
+      , "prelude/rust/tools/buildscript_run.py"
+      , "prelude/toolchains/android/src/com/facebook/buck/testrunner/BaseRunner.java"
+      , "prelude/toolchains/apple/xcode_version_checker/xcode_version_checker"
+      ]
+
 externalDirsTest :: IO ()
 externalDirsTest = do
   let paths = RepoPaths{rpGhcVersion = "9.6.7", rpGlobalRootAbs = "/ghc/lib", rpStoreRootAbs = "/home/u/.cabal/store/ghc-9.6.7", rpStoreDbRel = "package.db", rpExternal = Map.empty, rpDllExtension = "so", rpPicByDefault = False}
