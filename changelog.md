@@ -33,6 +33,10 @@
     has no `buck2/` directory, `cabal buck2` creates one from its own
     copy, and replaces it after an upgrade. A git checkout of
     haskell-buck2 in `buck2/` still works as before.
+  * A project's `cabal-buck2.bzl` can give `DEFAULTS` for the generated
+    targets, for every package or for one package, as well as
+    `OVERRIDES` for individual components
+    (see https://github.com/simonmar/cabal-buck2/issues/18).
 
 # 0.5.0.0
 

@@ -198,7 +198,29 @@ OVERRIDES = {
 }
 ```
 
-Re-run `cabal buck2` after adding or removing `cabal-buck2.bzl`.
+`cabal-buck2.bzl` can also give defaults for the generated targets,
+for every package (`"*"`) or for one package. Each package's defaults
+are keyed by the kind of target (`"library"`, `"executable"`,
+`"test-suite"` or `"benchmark"`), or by `"*"` for every kind. For
+example, to compile every target of the project module by module:
+
+```
+DEFAULTS = {
+    # package name or "*" -> kind or "*" -> extra attributes
+    "*": {
+        "*": {"per_module": True},
+    },
+}
+```
+
+The attributes are merged into the generated ones: lists are appended
+to, dicts are merged, and anything else is replaced. The overrides of
+a component win over all of the defaults, and the defaults for a
+package win over the defaults for every package. See
+`cabal_targets()` in `buck2/cabal.bzl` for the details.
+
+Re-run `cabal buck2` after adding or removing `cabal-buck2.bzl`, or
+adding or removing its `OVERRIDES` or `DEFAULTS`.
 
 You can also completely override the generated targets and write a
 `BUCK` file with your own rules, while still making use of the
