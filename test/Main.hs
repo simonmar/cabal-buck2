@@ -648,21 +648,35 @@ customSetup project = do
   appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
   assertContains "app BUCK.cabal.bzl" "'kind': 'executable'" appBzl
 
--- | A project's @cabal-buck2.bzl@, with its overrides of the generated
--- targets, is loaded by @packages.bzl@, and an empty set of overrides is
--- given there if there is none.
+-- | A project's @cabal-buck2.bzl@, with its overrides and defaults for the
+-- generated targets, is loaded by @packages.bzl@. Whichever of them the
+-- project doesn't define is given there as empty.
 projectOverrides :: Project -> IO ()
 projectOverrides project = do
+  let packagesWith bzl = do
+        writeFile (projectDir project </> "cabal-buck2.bzl") bzl
+        _ <- buck2 project []
+        readIn project ("cabal-buck2" </> "packages.bzl")
   _ <- buck2 project []
   without <- readIn project ("cabal-buck2" </> "packages.bzl")
   assertContains "packages.bzl" "OVERRIDES = {}" without
+  assertContains "packages.bzl" "DEFAULTS = {}" without
   assertNotContains "packages.bzl" "cabal-buck2.bzl\"" without
 
-  writeFile (projectDir project </> "cabal-buck2.bzl") "OVERRIDES = {}\n"
-  _ <- buck2 project []
-  with <- readIn project ("cabal-buck2" </> "packages.bzl")
-  assertContains "packages.bzl" "load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" with
-  assertContains "packages.bzl" "OVERRIDES = _OVERRIDES" with
+  overrides <- packagesWith "OVERRIDES = {}\n"
+  assertContains "packages.bzl" "load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\")" overrides
+  assertContains "packages.bzl" "OVERRIDES = _OVERRIDES" overrides
+  assertContains "packages.bzl" "DEFAULTS = {}" overrides
+
+  -- A comparison, or a name that only starts with DEFAULTS, isn't a
+  -- definition of it.
+  defaults <- packagesWith "DEFAULTS = {\"*\": {}}\nDEFAULTS == {}\nDEFAULTS_X = {}\n"
+  assertContains "packages.bzl" "load(\"//:cabal-buck2.bzl\", _DEFAULTS = \"DEFAULTS\")" defaults
+  assertContains "packages.bzl" "DEFAULTS = _DEFAULTS" defaults
+  assertContains "packages.bzl" "OVERRIDES = {}" defaults
+
+  both <- packagesWith "DEFAULTS={}\nOVERRIDES = {}\n"
+  assertContains "packages.bzl" "load(\"//:cabal-buck2.bzl\", _OVERRIDES = \"OVERRIDES\", _DEFAULTS = \"DEFAULTS\")" both
 
 -- | @--cache=ADDRESS@ adds the cache's settings to @.buckconfig@, which are
 -- kept by later runs without the flag, and @--no-cache@ removes.
