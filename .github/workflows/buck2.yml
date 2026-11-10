@@ -18,10 +18,16 @@ concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
+# Pushes are only tested on master and the release branches (0.4, say). A
+# branch with a pull request is tested by the pull_request event, and testing
+# its pushes as well would run every job twice.
 on:
-  - push
-  - pull_request
-  - workflow_dispatch
+  push:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+  pull_request:
+  workflow_dispatch:
 
 env:
   GHC_VERSION: 9.6.7
