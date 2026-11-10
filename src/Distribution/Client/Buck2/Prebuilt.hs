@@ -42,8 +42,10 @@ import qualified Data.Set as Set
 import System.Directory
   ( createDirectoryIfMissing
   , createFileLink
+  , doesDirectoryExist
   , doesFileExist
   , doesPathExist
+  , listDirectory
   , removeDirectoryRecursive
   , removeFile
   )
@@ -305,6 +307,9 @@ data ResolvedPackage = ResolvedPackage
   -- ^ Absolute paths, like 'rpProfiledLibs' and 'rpSharedLibs'.
   , rpProfiledLibs :: [FilePath]
   , rpSharedLibs :: [(String, FilePath)]
+  , rpRuntimeSharedLibs :: [(String, FilePath)]
+  -- ^ Shared libraries that an executable needs at run time, but that
+  -- we shouldn't explicitly link: the RTS for example.
   }
 
 -- | Every library file found for the package, and what to call it.
@@ -312,7 +317,7 @@ libraryFiles :: ResolvedPackage -> [(String, FilePath)]
 libraryFiles p =
   [("static", f) | f <- rpStaticLibs p]
     ++ [("profiled", f) | f <- rpProfiledLibs p]
-    ++ [("shared", f) | (_, f) <- rpSharedLibs p]
+    ++ [("shared", f) | (_, f) <- rpSharedLibs p ++ rpRuntimeSharedLibs p]
 
 confPath :: FilePath -> FilePath -> PkgDbKind -> UnitId -> FilePath
 confPath globalRootAbs storeDB kind uid = case kind of
@@ -371,7 +376,14 @@ readPackage verbosity paths storeDB uid = do
             if isRts
               then return []
               else findSharedLibs paths ipi
-          return $ Just (ResolvedPackage ipi uid dbKind staticLibs profiledLibs sharedLibs)
+          -- An executable linked against the RTS's shared library still has
+          -- to find it when it runs, so the RTS's shared libraries (one for
+          -- each way) are runtime_shared_libs instead.
+          runtimeSharedLibs <-
+            if isRts
+              then findWaySharedLibs paths ipi
+              else return []
+          return $ Just (ResolvedPackage ipi uid dbKind staticLibs profiledLibs sharedLibs runtimeSharedLibs)
 
 -- | Resolve each candidate filename against @dirs@ in turn, keeping only
 -- the ones that actually exist on disk (unlike gen-haskell-prebuilt.py's
@@ -403,6 +415,22 @@ findSharedLibs paths ipi = catMaybes <$> traverse oneStem (hsLibraries ipi)
       let soname = "lib" ++ stem ++ "-ghc" ++ rpGhcVersion paths <.> rpDllExtension paths
       mpath <- findOne paths dirs soname
       return ((,) soname <$> mpath)
+
+-- | The shared libraries of every way of each of the package's libraries:
+-- @libHSrts-1.0.3_thr-ghc9.12.4.so@ as well as @libHSrts-1.0.3-ghc9.12.4.so@,
+-- for example.
+findWaySharedLibs :: RepoPaths -> InstalledPackageInfo -> IO [(String, FilePath)]
+findWaySharedLibs paths ipi = do
+  found <- for (ordNub (libraryDynDirs ipi ++ libraryDirs ipi)) $ \dir -> do
+    exists <- doesDirectoryExist dir
+    files <- if exists then listDirectory dir else return []
+    return [(f, dir </> f) | f <- sort files, any (isWayOf f) (hsLibraries ipi)]
+  return (nubBy ((==) `on` fst) (concat found))
+  where
+    suffix = "-ghc" ++ rpGhcVersion paths <.> rpDllExtension paths
+    isWayOf file stem = case stripPrefix ("lib" ++ stem) file of
+      Just rest -> rest == suffix || ("_" `isPrefixOf` rest && suffix `isSuffixOf` rest)
+      Nothing -> False
 
 -- | @.conf@ files use @${pkgroot}@ (the directory containing the package
 -- db) as a portable stand-in for their own absolute location - GHC's own
@@ -520,6 +548,7 @@ prebuiltCall paths uidToTarget p =
         ++ [("profiled_static_libs", strList profiled) | not (null profiled)]
         ++ [("pic_profiled_static_libs", strList profiled) | not (null profiled)]
         ++ [("shared_libs", VDict [(soname, str sopath) | (soname, abs') <- rpSharedLibs p, Just sopath <- [toRepoRelative paths abs']])]
+        ++ [("runtime_shared_libs", VDict runtime) | not (null runtime)]
         ++ [("cxx_header_dirs", strList headerDirs) | not (null headerDirs)]
         ++ [("exported_linker_flags", strList extraLinkerFlags) | not (null extraLinkerFlags)]
         ++ [("deps", strList depTargets) | not (null depTargets)]
@@ -528,6 +557,7 @@ prebuiltCall paths uidToTarget p =
   where
     info = rpInfo p
     rel = mapMaybe (toRepoRelative paths)
+    runtime = [(soname, str sopath) | (soname, abs') <- rpRuntimeSharedLibs p, Just sopath <- [toRepoRelative paths abs']]
     profiled = rel (rpProfiledLibs p)
     globalDbRel = ("ghc-" ++ rpGhcVersion paths) </> "package.conf.d"
     headerDirs = mapMaybe (toRepoRelative paths) (includeDirs info)
