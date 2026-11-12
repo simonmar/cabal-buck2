@@ -91,6 +91,7 @@ tests =
   , ("same-name", sameName)
   , ("normalise-paths", normalisePaths)
   , ("run-tools", runTools)
+  , ("splice-depends", spliceDepends)
   ]
 
 -- | A library and an executable with the same name in one package, and
@@ -117,10 +118,7 @@ sameName project = do
 runTools :: Project -> IO ()
 runTools project = do
   original <- readIn project cabalFile
-  let with stanza fields = do
-        let (before, after) = breakOn stanza original
-        writeFile (projectDir project </> cabalFile) (before ++ stanza ++ fields ++ drop (length stanza) after)
-        runBuck2 project ["--enable-tests"]
+  let with = withFields project cabalFile original ["--enable-tests"]
       tool = "  build-tool-depends: exe-pkg:exe-pkg-exe\n"
 
   -- Without either field, the executable is both a build tool and a run
@@ -153,12 +151,62 @@ runTools project = do
     cabalFile = "exe-pkg" </> "exe-pkg.cabal"
     bzl = "exe-pkg" </> "BUCK.cabal.bzl"
     testStanza = "test-suite exe-pkg-test\n"
-    breakOn needle s = go "" s
-      where
-        go acc rest@(c : cs)
-          | needle `isPrefixOf` rest = (reverse acc, rest)
-          | otherwise = go (c : acc) cs
-        go acc [] = (reverse acc, [])
+
+-- | A library's @x-buck2-splice-depends@ field becomes its
+-- @splice_depends@ in the build spec, even when the field is
+-- empty. Without the field, the spec has no @splice_depends@. A
+-- field that lists a library that @build-depends@ doesn't is an error.
+spliceDepends :: Project -> IO ()
+spliceDepends project = do
+  original <- readIn project cabalFile
+  let with = withFields project cabalFile original [] stanza
+
+  _ <- with ""
+  plain <- readIn project bzl
+  assertNotContains bzl "'splice_depends'" plain
+
+  _ <- with "  x-buck2-splice-depends: lib-pkg\n"
+  listed <- readIn project bzl
+  assertContains bzl "'splice_depends': [\n                {\n                    'package': 'lib-pkg',\n                },\n            ]" listed
+
+  _ <- with "  x-buck2-splice-depends:\n"
+  empty <- readIn project bzl
+  assertContains bzl "'splice_depends': []" empty
+
+  -- The output wraps the message, so the check compares words rather than
+  -- lines.
+  (_, notDep) <- with "  x-buck2-splice-depends: stm\n"
+  assertContains "output" "skipping library exe-pkg (x-buck2-splice-depends lists stm, which build-depends doesn't)" (unwords (words notDep))
+
+  -- Before cabal-version 3.4 (exe-pkg's is 2.4), build-depends may name a
+  -- sublibrary of the package without the package's name, and so may the
+  -- field.
+  let (before, after) = breakOn "lib-pkg\n" original
+      withHelpers = before ++ "lib-pkg, helpers\n" ++ drop (length "lib-pkg\n") after ++ "\nlibrary helpers\n  build-depends: base\n  default-language: Haskell2010\n"
+  _ <- withFields project cabalFile withHelpers [] stanza "  x-buck2-splice-depends: helpers\n"
+  sublib <- readIn project bzl
+  assertContains bzl "'splice_depends': [\n                {\n                    'package': 'exe-pkg',\n                    'library': 'helpers',\n                },\n            ]" sublib
+  where
+    cabalFile = "exe-pkg" </> "exe-pkg.cabal"
+    bzl = "exe-pkg" </> "BUCK.cabal.bzl"
+    stanza = "library\n"
+
+-- | Runs cabal-buck2 with the package's .cabal file set to @original@,
+-- with @fields@ added at the start of @stanza@.
+withFields :: Project -> FilePath -> String -> [String] -> String -> String -> IO (ExitCode, String)
+withFields project cabalFile original args stanza fields = do
+  let (before, after) = breakOn stanza original
+  writeFile (projectDir project </> cabalFile) (before ++ stanza ++ fields ++ drop (length stanza) after)
+  runBuck2 project args
+
+-- | The text before the first occurrence of @needle@, and the rest.
+breakOn :: String -> String -> (String, String)
+breakOn needle = go ""
+  where
+    go acc rest@(c : cs)
+      | needle `isPrefixOf` rest = (reverse acc, rest)
+      | otherwise = go (c : acc) cs
+    go acc [] = (reverse acc, [])
 
 -- | Paths written with a @.\/@ prefix, in cabal.project and in the file
 -- patterns of a package: buck2 accepts neither in a label nor in a glob.
@@ -205,6 +253,7 @@ runTest exe (name, test) = do
       "buck2-unpack" -> "basic"
       "project-overrides" -> "basic"
       "run-tools" -> "basic"
+      "splice-depends" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir
