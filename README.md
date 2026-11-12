@@ -265,6 +265,35 @@ haskell_test(
 
 You can find docs on how to write `BUCK` files in the Buck2 docs, e.g. [haskell_library](https://buck2.build/docs/prelude/rules/haskell/haskell_library/).
 
+## Runtime tool dependencies
+
+Cabal provides a way to indicate build-time tool dependencies with
+`build-tool-depends`, but it also treats these as _runtime_ tool dependencies
+(i.e. it puts them on the `PATH` for test runs and `cabal run`s of executables).
+
+If we don't distinguish these, then `haskell-buck2` must build all `build-tool-depends`
+in both the build and target configurations, which means they will be built twice.
+
+For this reason we provide a way to fill in the "missing" Cabal `run-tool-depends` 
+field (proposed in [haskell/cabal#5411](https://github.com/haskell/cabal/issues/5411)).
+
+This works as follows:
+
+```
+test-suite tests
+  -- So `cabal test` continues to work.
+  build-tool-depends: my-package:my-exe
+  -- Not truly needed to _build_ the test-suite...
+  x-buck2-ignore-build-tool-depends: my-package:my-exe
+  -- Needed when the test suite runs 
+  x-buck2-run-tool-depends: my-package:my-exe
+```
+
+If `x-buck2-run-tool-depends` is present, we assume that it is accurate, and 
+so do not consider `build-tool-depends` to be runtime dependencies. If 
+`x-buck2-run-tool-depends` is not present, we assume that we have to mimic 
+Cabal's behaviour, and so `build-tool-depends` will also be considered runtime dependencies.
+
 ## The compilers
 
 Buck2 builds with the tools that `cabal buck2` found when it last ran, not

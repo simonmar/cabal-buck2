@@ -37,6 +37,12 @@
     targets, for every package or for one package, as well as
     `OVERRIDES` for individual components
     (see https://github.com/simonmar/cabal-buck2/issues/18).
+  * A test-suite, benchmark or executable that only runs a tool of its
+    `build-tool-depends` can say so with
+    `x-buck2-ignore-build-tool-depends` and
+    `x-buck2-run-tool-depends`, so that buck2 builds the tool once
+    rather than again for the execution platform
+    (see https://github.com/simonmar/haskell-buck2/issues/62).
 
 # 0.5.0.0
 

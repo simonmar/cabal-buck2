@@ -82,6 +82,10 @@ data SpecComponent = SpecComponent
   -- ^ Of a library: the modules that its package doesn't expose (Cabal's
   -- @other-modules@).
   , scBuildTools :: [SpecBuildTool]
+  -- ^ The tools the component needs to be built.
+  , scRunTools :: [SpecBuildTool]
+  -- ^ The tools that the component needs on @PATH@ when it runs. A library
+  -- has none.
   , scCSources :: [FilePath]
   , scCcOptions :: [String]
   , scCxxSources :: [FilePath]

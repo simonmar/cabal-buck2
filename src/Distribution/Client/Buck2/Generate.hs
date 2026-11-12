@@ -50,6 +50,7 @@ import Distribution.PackageDescription
   , TestSuite (testInterface, testName)
   , TestSuiteInterface (..)
   , buildToolDepends
+  , customFieldsBI
   , asmOptions
   , asmSources
   , autogenModules
@@ -91,6 +92,7 @@ import Distribution.Types.ComponentLocalBuildInfo (ComponentLocalBuildInfo (comp
 import Distribution.Types.ComponentName (ComponentName)
 import Distribution.Types.Dependency (depLibraries, depPkgName)
 import Distribution.Types.ExeDependency (ExeDependency (..))
+import Distribution.Types.UnqualComponentName (UnqualComponentName)
 import Distribution.Simple.LocalBuildInfo (buildDir)
 import Distribution.Types.BuildType (BuildType (Custom, Configure))
 import Distribution.Types.ModuleReexport (ModuleReexport (..))
@@ -325,6 +327,8 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
           skip (kindName kind ++ " " ++ targetName ++ " (build-type: Custom needs its Setup.hs to be run, unless --enable-custom-setup)")
       | unsupported : _ <- unsupportedSources bi =
           skip (kindName kind ++ " " ++ targetName ++ " (" ++ unsupported ++ " aren't supported)")
+      | Left problem <- buck2ToolFields kind bi =
+          skip (kindName kind ++ " " ++ targetName ++ " (" ++ problem ++ ")")
       | otherwise =
           case [(dp, ln) | d <- targetBuildDepends bi, let dp = depPkgName d, ln <- NES.toList (depLibraries d), (dp, ln) `Set.member` skippedLibs] of
             ((dp, ln) : _) ->
@@ -525,7 +529,14 @@ specComponent localIndex externalBuildTools kind name bi =
     , scDeps = map specDep (libraryDeps bi)
     , scReexports = []
     , scHiddenModules = []
-    , scBuildTools = mapMaybe buildToolSpec (ordNub [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi])
+    , scBuildTools = mapMaybe buildToolSpec (ordNub [tool | tool <- declaredBuildTools bi, tool `notElem` ignoredBuildTools fields])
+    , -- Without x-buck2-run-tool-depends, a component runs with all of its
+      -- build-tool-depends on PATH, as it does with cabal test, cabal bench
+      -- and cabal run.
+      scRunTools =
+        if kind == Library
+          then []
+          else mapMaybe buildToolSpec (ordNub (fromMaybe (declaredBuildTools bi) (runTools fields)))
     , scCSources = map getSymbolicPath (cSources bi)
     , scCxxSources = map getSymbolicPath (cxxSources bi)
     , scCmmSources = map getSymbolicPath (cmmSources bi)
@@ -540,6 +551,9 @@ specComponent localIndex externalBuildTools kind name bi =
     , scPkgconfig = ordNub [unPkgconfigName n | PkgconfigDependency n _ <- pkgconfigDepends bi]
     }
   where
+    -- ifNotOnSkippedLib skips a component whose fields can't be read, so
+    -- the error case can't happen here.
+    fields = either (const (Buck2ToolFields [] Nothing)) id (buck2ToolFields kind bi)
     -- A tool that's neither built by this project nor resolved to a real
     -- external binary can't be put on PATH by buck2: dropped, silently -
     -- most build-tool-depends are Setup.hs-time tools nothing needs on PATH.
@@ -550,6 +564,56 @@ specComponent localIndex externalBuildTools kind name bi =
         | otherwise -> Nothing
       where
         n = unUnqualComponentName exe
+
+-- | The tool dependencies that a component declares in cabal-buck2's special
+-- Cabal extension fields.
+data Buck2ToolFields = Buck2ToolFields
+  { ignoredBuildTools :: [(PackageName, UnqualComponentName)]
+  -- ^ The tools in @x-buck2-ignore-build-tool-depends@. Theses are tools that were
+  -- listed in in @build-tool-depends@, but which aren't truly needed for the build.
+  , runTools :: Maybe [(PackageName, UnqualComponentName)]
+  -- ^ The tools in @x-buck2-run-tool-depends@, which the component needs on
+  -- @PATH@ when it runs. This is 'Nothing' if the component doesn't have
+  -- the field, and an empty list if the field is empty.
+  }
+
+-- | Reads a component's 'Buck2ToolFields'. 
+-- 
+-- Each field is a comma-separated list of tools, as in @build-tool-depends@. The result 
+-- is an error message if a field can't be parsed, if
+-- @x-buck2-ignore-build-tool-depends@ lists a tool that
+-- @build-tool-depends@ doesn't, or if a library has
+-- @x-buck2-run-tool-depends@. 
+buck2ToolFields :: ComponentKind -> BuildInfo -> Either String Buck2ToolFields
+buck2ToolFields kind bi = do
+  ignored <- fromMaybe [] <$> field ignoreField
+  runtime <- field runField
+  case [t | t <- ignored, t `notElem` declaredBuildTools bi] of
+    t : _ -> Left (ignoreField ++ " lists " ++ toolName t ++ ", which build-tool-depends doesn't")
+    [] -> pure ()
+  when (kind == Library && isJust runtime) $
+    Left (runField ++ " is only for components that run")
+  pure (Buck2ToolFields ignored runtime)
+  where
+    ignoreField = "x-buck2-ignore-build-tool-depends"
+    runField = "x-buck2-run-tool-depends"
+    -- The tools that a field lists, or Nothing if the component doesn't
+    -- have the field.
+    field name = case [value | (key, value) <- customFieldsBI bi, map toLower key == name] of
+      [] -> Right Nothing
+      values -> Just . concat <$> traverse (traverse (tool name) . items) values
+    items = filter (not . null) . map (dropWhile isSpace . dropWhileEnd isSpace) . splitOnCommas
+    splitOnCommas s = case break (== ',') s of
+      (item, _ : rest) -> item : splitOnCommas rest
+      (item, []) -> [item]
+    tool name item = case eitherParsec item of
+      Right (ExeDependency pn exe _) -> Right (pn, exe)
+      Left err -> Left (name ++ ": can't read " ++ show item ++ ": " ++ err)
+    toolName (pn, exe) = prettyShow pn ++ ":" ++ prettyShow exe
+
+-- | The tools listed by a component's @build-tool-depends@ lists.
+declaredBuildTools :: BuildInfo -> [(PackageName, UnqualComponentName)]
+declaredBuildTools bi = [(pn, exe) | ExeDependency pn exe _ <- buildToolDepends bi]
 
 -- | The project-supplied GHC options (see 'ghcProgramArgs') for a
 -- package. Cabal gives every component of a package the same ones (they

@@ -90,6 +90,7 @@ tests =
   , ("project-overrides", projectOverrides)
   , ("same-name", sameName)
   , ("normalise-paths", normalisePaths)
+  , ("run-tools", runTools)
   ]
 
 -- | A library and an executable with the same name in one package, and
@@ -110,6 +111,54 @@ sameName project = do
   userBzl <- readIn project ("user" </> "BUCK.cabal.bzl")
   assertContains "user/BUCK.cabal.bzl" "'exe': 'tool-exe'" userBzl
   assertContains "user/BUCK.cabal.bzl" "'package': 'tool'" userBzl
+
+-- | Check that we handle @x-buck2-ignore-build-tool-depends@ and
+-- @x-buck2-run-tool-depends@ correctly for a test suite. 
+runTools :: Project -> IO ()
+runTools project = do
+  original <- readIn project cabalFile
+  let with stanza fields = do
+        let (before, after) = breakOn stanza original
+        writeFile (projectDir project </> cabalFile) (before ++ stanza ++ fields ++ drop (length stanza) after)
+        runBuck2 project ["--enable-tests"]
+      tool = "  build-tool-depends: exe-pkg:exe-pkg-exe\n"
+
+  -- Without either field, the executable is both a build tool and a run
+  -- tool, because cabal test puts build-tool-depends on the test's PATH.
+  _ <- with testStanza tool
+  plain <- readIn project bzl
+  assertContains bzl "'build_tools'" plain
+  assertContains bzl "'run_tools'" plain
+
+  -- With both fields, the executable is only a run tool.
+  (_, _) <- with testStanza (tool ++ "  x-buck2-ignore-build-tool-depends: exe-pkg:exe-pkg-exe\n  x-buck2-run-tool-depends: exe-pkg:exe-pkg-exe\n")
+  fields <- readIn project bzl
+  assertNotContains bzl "'build_tools'" fields
+  assertContains bzl "'run_tools': [\n                {\n                    'exe': 'exe-pkg-exe',\n                    'package': 'exe-pkg',\n                },\n            ]" fields
+
+  -- An empty x-buck2-run-tool-depends means that the test runs no tools.
+  _ <- with testStanza (tool ++ "  x-buck2-run-tool-depends:\n")
+  empty <- readIn project bzl
+  assertContains bzl "'build_tools'" empty
+  assertNotContains bzl "'run_tools'" empty
+
+  -- cabal-buck2 rejects fields that it can't use. Its output wraps the
+  -- message, so these checks compare words rather than lines.
+  (_, unlisted) <- with testStanza "  x-buck2-ignore-build-tool-depends: exe-pkg:exe-pkg-exe\n"
+  assertContains "output" "skipping test-suite exe-pkg-test (x-buck2-ignore-build-tool-depends lists exe-pkg:exe-pkg-exe, which build-tool-depends doesn't)" (unwords (words unlisted))
+
+  (_, library) <- with "library\n" "  x-buck2-run-tool-depends: exe-pkg:exe-pkg-exe\n"
+  assertContains "output" "skipping library exe-pkg (x-buck2-run-tool-depends is only for components that run)" (unwords (words library))
+  where
+    cabalFile = "exe-pkg" </> "exe-pkg.cabal"
+    bzl = "exe-pkg" </> "BUCK.cabal.bzl"
+    testStanza = "test-suite exe-pkg-test\n"
+    breakOn needle s = go "" s
+      where
+        go acc rest@(c : cs)
+          | needle `isPrefixOf` rest = (reverse acc, rest)
+          | otherwise = go (c : acc) cs
+        go acc [] = (reverse acc, [])
 
 -- | Paths written with a @.\/@ prefix, in cabal.project and in the file
 -- patterns of a package: buck2 accepts neither in a label nor in a glob.
@@ -155,6 +204,7 @@ runTest exe (name, test) = do
       "buck2-version" -> "basic"
       "buck2-unpack" -> "basic"
       "project-overrides" -> "basic"
+      "run-tools" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir
