@@ -83,6 +83,10 @@ data SpecComponent = SpecComponent
   -- @other-modules@).
   , scBuildTools :: [SpecBuildTool]
   -- ^ The tools the component needs to be built.
+  , scTemplateHaskellDepends :: Maybe [SpecDep]
+  -- ^ The libraries whose code the component's Template Haskell splices
+  -- run. This is Nothing if the component doesn't say which libraries they
+  -- are.
   , scRunTools :: [SpecBuildTool]
   -- ^ The tools that the component needs on @PATH@ when it runs. A library
   -- has none.

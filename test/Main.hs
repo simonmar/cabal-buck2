@@ -91,6 +91,7 @@ tests =
   , ("same-name", sameName)
   , ("normalise-paths", normalisePaths)
   , ("run-tools", runTools)
+  , ("template-haskell-depends", templateHaskellDepends)
   ]
 
 -- | A library and an executable with the same name in one package, and
@@ -160,6 +161,45 @@ runTools project = do
           | otherwise = go (c : acc) cs
         go acc [] = (reverse acc, [])
 
+-- | A library's @x-buck2-template-haskell-depends@ field becomes its
+-- @template_haskell_depends@ in the build spec, even when the field is
+-- empty. Without the field, the spec has no @template_haskell_depends@. A
+-- field that lists a library that @build-depends@ doesn't is an error.
+templateHaskellDepends :: Project -> IO ()
+templateHaskellDepends project = do
+  original <- readIn project cabalFile
+  let with fields = do
+        let (before, after) = breakOn stanza original
+        writeFile (projectDir project </> cabalFile) (before ++ stanza ++ fields ++ drop (length stanza) after)
+        runBuck2 project []
+
+  _ <- with ""
+  plain <- readIn project bzl
+  assertNotContains bzl "'template_haskell_depends'" plain
+
+  _ <- with "  x-buck2-template-haskell-depends: lib-pkg\n"
+  listed <- readIn project bzl
+  assertContains bzl "'template_haskell_depends': [\n                {\n                    'package': 'lib-pkg',\n                },\n            ]" listed
+
+  _ <- with "  x-buck2-template-haskell-depends:\n"
+  empty <- readIn project bzl
+  assertContains bzl "'template_haskell_depends': []" empty
+
+  -- The output wraps the message, so the check compares words rather than
+  -- lines.
+  (_, notDep) <- with "  x-buck2-template-haskell-depends: stm\n"
+  assertContains "output" "skipping library exe-pkg (x-buck2-template-haskell-depends lists stm, which build-depends doesn't)" (unwords (words notDep))
+  where
+    cabalFile = "exe-pkg" </> "exe-pkg.cabal"
+    bzl = "exe-pkg" </> "BUCK.cabal.bzl"
+    stanza = "library\n"
+    breakOn needle s = go "" s
+      where
+        go acc rest@(c : cs)
+          | needle `isPrefixOf` rest = (reverse acc, rest)
+          | otherwise = go (c : acc) cs
+        go acc [] = (reverse acc, [])
+
 -- | Paths written with a @.\/@ prefix, in cabal.project and in the file
 -- patterns of a package: buck2 accepts neither in a label nor in a glob.
 normalisePaths :: Project -> IO ()
@@ -205,6 +245,7 @@ runTest exe (name, test) = do
       "buck2-unpack" -> "basic"
       "project-overrides" -> "basic"
       "run-tools" -> "basic"
+      "template-haskell-depends" -> "basic"
       _ -> name
     setup dir = do
       cleanup dir

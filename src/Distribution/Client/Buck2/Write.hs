@@ -270,6 +270,9 @@ componentValue c =
       ++ listField "hidden_modules" (scHiddenModules c)
       ++ valuesField "build_tools" (map buildToolValue (scBuildTools c))
       ++ valuesField "run_tools" (map buildToolValue (scRunTools c))
+      -- The field is written even when it's empty, because an empty list says
+      -- that the splices run no library's code.
+      ++ [("template_haskell_depends", VList (map depValue deps)) | Just deps <- [scTemplateHaskellDepends c]]
       ++ listField "c_sources" (scCSources c)
       ++ listField "cc_options" (scCcOptions c)
       ++ listField "cxx_sources" (scCxxSources c)
