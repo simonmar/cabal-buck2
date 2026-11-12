@@ -269,6 +269,7 @@ componentValue c =
       ++ valuesField "reexports" (map reexportValue (scReexports c))
       ++ listField "hidden_modules" (scHiddenModules c)
       ++ valuesField "build_tools" (map buildToolValue (scBuildTools c))
+      ++ valuesField "run_tools" (map buildToolValue (scRunTools c))
       ++ listField "c_sources" (scCSources c)
       ++ listField "cc_options" (scCcOptions c)
       ++ listField "cxx_sources" (scCxxSources c)
