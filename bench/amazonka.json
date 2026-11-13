@@ -1,0 +1,32 @@
+{
+  "name": "amazonka",
+  "repo": "https://github.com/brendanhay/amazonka.git",
+  "rev": "b70b0b968d544eb826fd7e25fbc2a62c43b15bee",
+  "packages": [
+    "lib/amazonka/",
+    "lib/amazonka-core/",
+    "lib/amazonka-dynamodb-attributevalue/",
+    "lib/services/amazonka-dynamodb/",
+    "lib/services/amazonka-ec2/",
+    "lib/services/amazonka-quicksight/",
+    "lib/services/amazonka-s3/",
+    "lib/services/amazonka-sagemaker/",
+    "lib/services/amazonka-sso/",
+    "lib/services/amazonka-sts/"
+  ],
+  "project": "write-ghc-environment-files: never\n",
+  "repl": ["amazonka", "amazonka-core", "amazonka-dynamodb-attributevalue", "amazonka-dynamodb", "amazonka-ec2", "amazonka-quicksight", "amazonka-s3", "amazonka-sagemaker", "amazonka-sso", "amazonka-sts"],
+  "hub_comment": {
+    "file": "lib/amazonka-core/src/Amazonka/Prelude.hs",
+    "append": "\n-- A comment, added by bench/compare.py.\n"
+  },
+  "hub_abi": {
+    "file": "lib/amazonka-core/src/Amazonka/Prelude.hs",
+    "replace": [["    ByteStringBuilder,\n  )", "    ByteStringBuilder,\n    benchExport,\n  )"]],
+    "append": "\nbenchExport :: Int\nbenchExport = 0\n"
+  },
+  "leaf": {
+    "file": "lib/amazonka/src/Amazonka.hs",
+    "append": "\nbenchLeaf :: Int\nbenchLeaf = 0\n"
+  }
+}
