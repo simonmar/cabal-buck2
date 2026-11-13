@@ -43,6 +43,10 @@
     `x-buck2-run-tool-depends`, so that buck2 builds the tool once
     rather than again for the execution platform
     (see https://github.com/simonmar/haskell-buck2/issues/62).
+  * A component can list the libraries whose code its Template Haskell
+    splices run in `x-buck2-template-haskell-depends`, so that buck2
+    can compile a Template Haskell module without waiting for the rest
+    of its libraries to be linked.
 
 # 0.5.0.0
 

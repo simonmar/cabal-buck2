@@ -294,6 +294,31 @@ so do not consider `build-tool-depends` to be runtime dependencies. If
 `x-buck2-run-tool-depends` is not present, we assume that we have to mimic 
 Cabal's behaviour, and so `build-tool-depends` will also be considered runtime dependencies.
 
+## Template Haskell dependencies
+
+With `haskell-buck2`'s per-module compilation, modules using Template Haskell
+can only compile once the libraries that they use are linked.
+Cabal's `build-depends` doesn't say which libraries are actually used in TH,
+so by default a Template Haskell module has to wait for all of them.
+
+A component can list the libraries that its splices run in
+`x-buck2-template-haskell-depends`. This fills in the "missing" Cabal
+`template-haskell-depends` field (proposed in
+[haskell/cabal#12583](https://github.com/haskell/cabal/issues/12583)).
+
+```
+library
+  build-depends: base, aeson, my-codegen
+  -- Only my-codegen's code runs in the splices.
+  x-buck2-template-haskell-depends: my-codegen
+```
+
+The libraries must also be in `build-depends` so that cabal can link them.
+
+If `x-buck2-template-haskell-depends` is present, we assume that it is
+accurate. If the field is not present, we are pessimistic and assume that
+a Template Haskell module may use any of the component's libraries.
+
 ## The compilers
 
 Buck2 builds with the tools that `cabal buck2` found when it last ran, not
