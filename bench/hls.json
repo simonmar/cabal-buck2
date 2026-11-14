@@ -1,0 +1,186 @@
+{
+  "name": "hls",
+  "repo": "https://github.com/haskell/haskell-language-server.git",
+  "rev": "793c889a64128db1b40118ac0eed35bb981ab010",
+  "project_file": "cabal.project",
+  "packages": [
+    ".",
+    "ghcide",
+    "hls-graph",
+    "hls-plugin-api",
+    "hls-test-utils",
+    "shake-bench"
+  ],
+  "patches": [
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "  build-tool-depends:\n    haskell-language-server:haskell-language-server,\n\n",
+          "  build-tool-depends:\n    haskell-language-server:haskell-language-server,\n  x-buck2-ignore-build-tool-depends: haskell-language-server:haskell-language-server\n  x-buck2-run-tool-depends: haskell-language-server:haskell-language-server\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "  build-tool-depends:\n    haskell-language-server:haskell-language-server-wrapper,\n    haskell-language-server:haskell-language-server\n\n",
+          "  build-tool-depends:\n    haskell-language-server:haskell-language-server-wrapper,\n    haskell-language-server:haskell-language-server\n  x-buck2-ignore-build-tool-depends: haskell-language-server:haskell-language-server-wrapper, haskell-language-server:haskell-language-server\n  x-buck2-run-tool-depends: haskell-language-server:haskell-language-server-wrapper, haskell-language-server:haskell-language-server\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "  build-tool-depends:\n    , ghcide:ghcide\n    , haskell-language-server:ghcide-test-preprocessor\n    , implicit-hie:gen-hie\n\n",
+          "  build-tool-depends:\n    , ghcide:ghcide\n    , haskell-language-server:ghcide-test-preprocessor\n    , implicit-hie:gen-hie\n  x-buck2-ignore-build-tool-depends: ghcide:ghcide, haskell-language-server:ghcide-test-preprocessor, implicit-hie:gen-hie\n  x-buck2-run-tool-depends: ghcide:ghcide, haskell-language-server:ghcide-test-preprocessor, implicit-hie:gen-hie\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "    build-tool-depends:\n        haskell-language-server:ghcide-bench\n",
+          "    build-tool-depends:\n        haskell-language-server:ghcide-bench\n    x-buck2-ignore-build-tool-depends: haskell-language-server:ghcide-bench\n    x-buck2-run-tool-depends: haskell-language-server:ghcide-bench\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "    build-tool-depends:\n        ghcide:ghcide,\n    main-is: Main.hs\n",
+          "    build-tool-depends:\n        ghcide:ghcide,\n    x-buck2-ignore-build-tool-depends: ghcide:ghcide\n    x-buck2-run-tool-depends: ghcide:ghcide\n    main-is: Main.hs\n"
+        ]
+      ]
+    },
+    {
+      "file": "ghcide/ghcide.cabal",
+      "replace": [
+        [
+          "\nlibrary\n  import: warnings\n  default-language:   GHC2021\n",
+          "\nlibrary\n  import: warnings\n  x-buck2-template-haskell-depends: lens\n  default-language:   GHC2021\n"
+        ]
+      ]
+    },
+    {
+      "file": "ghcide/ghcide.cabal",
+      "replace": [
+        [
+          "\nexecutable ghcide\n  import: warnings\n  default-language:   GHC2021\n",
+          "\nexecutable ghcide\n  import: warnings\n  x-buck2-template-haskell-depends: gitrev\n  default-language:   GHC2021\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\nlibrary\n  import:           defaults\n                  , warnings\n                  , pedantic\n                  -- plugins\n                  , cabal\n                  , callHierarchy\n                  , cabalfmt\n                  , cabalgild\n                  , changeTypeSignature\n                  , class\n                  , eval\n                  , importLens\n                  , caseSplit\n                  , rename\n                  , hlint\n                  , stan\n                  , signatureHelp\n                  , pragmas\n                  , splice\n                  , alternateNumberFormat\n                  , qualifyImportedNames\n                  , codeRange\n                  , gadt\n                  , explicitFixity\n                  , explicitFields\n                  , fourmolu\n                  , ormolu\n                  , stylishHaskell\n                  , refactor\n                  , overloadedRecordDot\n                  , semanticTokens\n                  , notes\n                  , export\n\n",
+          "\nlibrary\n  import:           defaults\n                  , warnings\n                  , pedantic\n                  -- plugins\n                  , cabal\n                  , callHierarchy\n                  , cabalfmt\n                  , cabalgild\n                  , changeTypeSignature\n                  , class\n                  , eval\n                  , importLens\n                  , caseSplit\n                  , rename\n                  , hlint\n                  , stan\n                  , signatureHelp\n                  , pragmas\n                  , splice\n                  , alternateNumberFormat\n                  , qualifyImportedNames\n                  , codeRange\n                  , gadt\n                  , explicitFixity\n                  , explicitFields\n                  , fourmolu\n                  , ormolu\n                  , stylishHaskell\n                  , refactor\n                  , overloadedRecordDot\n                  , semanticTokens\n                  , notes\n                  , export\n  x-buck2-template-haskell-depends: githash, optparse-simple\n\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\nlibrary hls-code-range-plugin\n  import:           defaults, pedantic, warnings\n  if !flag(codeRange)\n",
+          "\nlibrary hls-code-range-plugin\n  import:           defaults, pedantic, warnings\n  x-buck2-template-haskell-depends: lens\n  if !flag(codeRange)\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\nlibrary hls-eval-plugin\n  import: defaults, pedantic, warnings\n  if !flag(eval)\n",
+          "\nlibrary hls-eval-plugin\n  import: defaults, pedantic, warnings\n  x-buck2-template-haskell-depends: lens\n  if !flag(eval)\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\nlibrary hls-semantic-tokens-plugin\n  import: defaults, pedantic, warnings\n  if !flag(semanticTokens)\n",
+          "\nlibrary hls-semantic-tokens-plugin\n  import: defaults, pedantic, warnings\n  x-buck2-template-haskell-depends: ghcide\n  if !flag(semanticTokens)\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\ntest-suite hls-cabal-plugin-tests\n  import:           defaults, pedantic, test-defaults, warnings\n  if !flag(cabal)\n",
+          "\ntest-suite hls-cabal-plugin-tests\n  import:           defaults, pedantic, test-defaults, warnings\n  x-buck2-template-haskell-depends: hls-test-utils\n  if !flag(cabal)\n"
+        ]
+      ]
+    },
+    {
+      "file": "haskell-language-server.cabal",
+      "replace": [
+        [
+          "\ntest-suite hls-signature-help-plugin-tests\n  import:           defaults, pedantic, test-defaults, warnings\n  if !flag(signatureHelp)\n",
+          "\ntest-suite hls-signature-help-plugin-tests\n  import:           defaults, pedantic, test-defaults, warnings\n  x-buck2-template-haskell-depends: hls-test-utils\n  if !flag(signatureHelp)\n"
+        ]
+      ]
+    }
+  ],
+  "repl": [
+    "hls-graph",
+    "ghcide",
+    "hls-plugin-api",
+    "haskell-language-server",
+    "haskell-language-server:lib:hls-alternate-number-format-plugin",
+    "haskell-language-server:lib:hls-cabal-fmt-plugin",
+    "haskell-language-server:lib:hls-cabal-gild-plugin",
+    "haskell-language-server:lib:hls-cabal-plugin",
+    "haskell-language-server:lib:hls-call-hierarchy-plugin",
+    "haskell-language-server:lib:hls-change-type-signature-plugin",
+    "haskell-language-server:lib:hls-class-plugin",
+    "haskell-language-server:lib:hls-code-range-plugin",
+    "haskell-language-server:lib:hls-eval-plugin",
+    "haskell-language-server:lib:hls-explicit-fixity-plugin",
+    "haskell-language-server:lib:hls-explicit-imports-plugin",
+    "haskell-language-server:lib:hls-explicit-record-fields-plugin",
+    "haskell-language-server:lib:hls-export-plugin",
+    "haskell-language-server:lib:hls-fourmolu-plugin",
+    "haskell-language-server:lib:hls-gadt-plugin",
+    "haskell-language-server:lib:hls-hlint-plugin",
+    "haskell-language-server:lib:hls-notes-plugin",
+    "haskell-language-server:lib:hls-ormolu-plugin",
+    "haskell-language-server:lib:hls-overloaded-record-dot-plugin",
+    "haskell-language-server:lib:hls-pragmas-plugin",
+    "haskell-language-server:lib:hls-qualify-imported-names-plugin",
+    "haskell-language-server:lib:hls-refactor-plugin",
+    "haskell-language-server:lib:hls-rename-plugin",
+    "haskell-language-server:lib:hls-semantic-tokens-plugin",
+    "haskell-language-server:lib:hls-signature-help-plugin",
+    "haskell-language-server:lib:hls-splice-plugin",
+    "haskell-language-server:lib:hls-stylish-haskell-plugin",
+    "haskell-language-server:lib:hls-exactprint-utils",
+    "haskell-language-server:exe:haskell-language-server"
+  ],
+  "hub_comment": {
+    "file": "ghcide/src/Development/IDE/GHC/Compat.hs",
+    "append": "\n-- A comment, added by bench/compare.py.\n"
+  },
+  "hub_abi": {
+    "file": "ghcide/src/Development/IDE/GHC/Compat.hs",
+    "replace": [
+      [
+        "#endif\n\n    ) where",
+        "#endif\n\n    benchExport,\n    ) where"
+      ]
+    ],
+    "append": "\nbenchExport :: Int\nbenchExport = 0\n"
+  },
+  "leaf": {
+    "file": "exe/Main.hs",
+    "append": "\nbenchLeaf :: Int\nbenchLeaf = 0\n"
+  }
+}
