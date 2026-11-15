@@ -1,0 +1,102 @@
+{
+  "name": "cabal",
+  "repo": "https://github.com/haskell/cabal.git",
+  "rev": "585e22c2be4baa024dffdc6ec38d822e17366a62",
+  "project_file": "cabal.project",
+  "packages": [
+    "Cabal",
+    "Cabal-QuickCheck",
+    "Cabal-described",
+    "Cabal-hooks",
+    "Cabal-syntax",
+    "Cabal-tests",
+    "Cabal-tree-diff",
+    "buildinfo-reference-generator",
+    "cabal-benchmarks",
+    "cabal-install",
+    "cabal-install-solver",
+    "cabal-validate",
+    "hooks-exe",
+    "solver-benchmarks"
+  ],
+  "patches": [
+    {
+      "file": "Cabal/Cabal.cabal",
+      "replace": [
+        [
+          "      , githash ^>= 0.1.7.0\n    cpp-options: -DGIT_REV\n",
+          "      , githash ^>= 0.1.7.0\n    cpp-options: -DGIT_REV\n    x-buck2-template-haskell-depends: githash\n"
+        ]
+      ]
+    },
+    {
+      "file": "cabal-install/cabal-install.cabal",
+      "replace": [
+        [
+          "      build-depends: githash ^>= 0.1.7.0\n      cpp-options: -DGIT_REV\n",
+          "      build-depends: githash ^>= 0.1.7.0\n      cpp-options: -DGIT_REV\n      x-buck2-template-haskell-depends: githash\n"
+        ]
+      ]
+    },
+    {
+      "file": "project-cabal/pkgs.config",
+      "replace": [
+        [
+          "import: pkgs/integration-tests.config\n",
+          ""
+        ]
+      ]
+    }
+  ],
+  "repl": [
+    "Cabal-QuickCheck:lib:Cabal-QuickCheck",
+    "Cabal-described:lib:Cabal-described",
+    "Cabal-hooks:lib:Cabal-hooks",
+    "Cabal-syntax:lib:Cabal-syntax",
+    "Cabal-tests:exe:ghc-supported-extensions",
+    "Cabal-tests:lib:Cabal-tests",
+    "Cabal-tests:test:check-tests",
+    "Cabal-tests:test:custom-setup-tests",
+    "Cabal-tests:test:hackage-tests",
+    "Cabal-tests:test:no-thunks-test",
+    "Cabal-tests:test:parser-tests",
+    "Cabal-tests:test:rpmvercmp",
+    "Cabal-tests:test:unit-tests",
+    "Cabal-tree-diff:lib:Cabal-tree-diff",
+    "Cabal:lib:Cabal",
+    "buildinfo-reference-generator:exe:buildinfo-reference-generator",
+    "cabal-benchmarks:test:cabal-benchmarks",
+    "cabal-install-solver:lib:cabal-install-solver",
+    "cabal-install-solver:test:unit-tests",
+    "cabal-install:exe:cabal",
+    "cabal-install:lib:cabal-install",
+    "cabal-install:test:integration-tests2",
+    "cabal-install:test:long-tests",
+    "cabal-install:test:mem-use-tests",
+    "cabal-install:test:parser-tests",
+    "cabal-install:test:unit-tests",
+    "cabal-validate:exe:cabal-validate",
+    "hooks-exe:lib:hooks-exe",
+    "solver-benchmarks:exe:hackage-benchmark",
+    "solver-benchmarks:lib:solver-benchmarks",
+    "solver-benchmarks:test:unit-tests"
+  ],
+  "hub_comment": {
+    "file": "Cabal-syntax/src/Language/Haskell/Extension.hs",
+    "append": "\n-- A comment, added by bench/compare.py.\n"
+  },
+  "hub_abi": {
+    "file": "Cabal-syntax/src/Language/Haskell/Extension.hs",
+    "replace": [
+      [
+        "  , knownExtensions\n  ) where",
+        "  , knownExtensions\n  , benchExport\n  ) where"
+      ]
+    ],
+    "append": "\nbenchExport :: Int\nbenchExport = 0\n"
+  },
+  "leaf": {
+    "file": "cabal-install/main/Main.hs",
+    "append": "\nbenchLeaf :: Int\nbenchLeaf = 0\n"
+  }
+}
