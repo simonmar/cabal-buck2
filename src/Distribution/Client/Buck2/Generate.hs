@@ -100,7 +100,7 @@ import Distribution.Types.LocalBuildInfo (LocalBuildInfo (compiler, hostPlatform
 import Distribution.Types.PackageName (PackageName, unPackageName)
 import Distribution.Types.PkgconfigDependency (PkgconfigDependency (..))
 import Distribution.Types.PkgconfigName (unPkgconfigName)
-import Distribution.Types.UnqualComponentName (unUnqualComponentName)
+import Distribution.Types.UnqualComponentName (unUnqualComponentName, unqualComponentNameToPackageName)
 import Distribution.Utils.Path (getSymbolicPath)
 
 import Distribution.Simple.Build.Macros (generateCabalMacrosHeader)
@@ -327,7 +327,7 @@ generateComponent localIndex projectRoot componentLBIs externalBuildTools projec
           skip (kindName kind ++ " " ++ targetName ++ " (build-type: Custom needs its Setup.hs to be run, unless --enable-custom-setup)")
       | unsupported : _ <- unsupportedSources bi =
           skip (kindName kind ++ " " ++ targetName ++ " (" ++ unsupported ++ " aren't supported)")
-      | Left problem <- buck2ToolFields kind bi =
+      | Left problem <- buck2Fields kind bi =
           skip (kindName kind ++ " " ++ targetName ++ " (" ++ problem ++ ")")
       | otherwise =
           case [(dp, ln) | d <- targetBuildDepends bi, let dp = depPkgName d, ln <- NES.toList (depLibraries d), (dp, ln) `Set.member` skippedLibs] of
@@ -530,6 +530,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scReexports = []
     , scHiddenModules = []
     , scBuildTools = mapMaybe buildToolSpec (ordNub [tool | tool <- declaredBuildTools bi, tool `notElem` ignoredBuildTools fields])
+    , scSpliceDepends = map specDep <$> spliceDepends fields
     , -- Without x-buck2-run-tool-depends, a component runs with all of its
       -- build-tool-depends on PATH, as it does with cabal test, cabal bench
       -- and cabal run.
@@ -553,7 +554,7 @@ specComponent localIndex externalBuildTools kind name bi =
   where
     -- ifNotOnSkippedLib skips a component whose fields can't be read, so
     -- the error case can't happen here.
-    fields = either (const (Buck2ToolFields [] Nothing)) id (buck2ToolFields kind bi)
+    fields = either (const (Buck2Fields [] Nothing Nothing)) id (buck2Fields kind bi)
     -- A tool that's neither built by this project nor resolved to a real
     -- external binary can't be put on PATH by buck2: dropped, silently -
     -- most build-tool-depends are Setup.hs-time tools nothing needs on PATH.
@@ -565,9 +566,9 @@ specComponent localIndex externalBuildTools kind name bi =
       where
         n = unUnqualComponentName exe
 
--- | The tool dependencies that a component declares in cabal-buck2's special
+-- | The dependencies that a component declares in cabal-buck2's special
 -- Cabal extension fields.
-data Buck2ToolFields = Buck2ToolFields
+data Buck2Fields = Buck2Fields
   { ignoredBuildTools :: [(PackageName, UnqualComponentName)]
   -- ^ The tools in @x-buck2-ignore-build-tool-depends@. Theses are tools that were
   -- listed in in @build-tool-depends@, but which aren't truly needed for the build.
@@ -575,41 +576,67 @@ data Buck2ToolFields = Buck2ToolFields
   -- ^ The tools in @x-buck2-run-tool-depends@, which the component needs on
   -- @PATH@ when it runs. This is 'Nothing' if the component doesn't have
   -- the field, and an empty list if the field is empty.
+  , spliceDepends :: Maybe [(PackageName, LibraryName)]
+  -- ^ The libraries in @x-buck2-splice-depends@, whose code the
+  -- component's Template Haskell splices run. This is 'Nothing' if the
+  -- component doesn't have the field, and an empty list if the field is
+  -- empty.
   }
 
--- | Reads a component's 'Buck2ToolFields'. 
--- 
--- Each field is a comma-separated list of tools, as in @build-tool-depends@. The result 
--- is an error message if a field can't be parsed, if
+-- | Reads a component's 'Buck2Fields'.
+--
+-- Each field is a comma-separated list, written as in the Cabal field that
+-- it refines.
+--
+-- The result is an
+-- error message if a field can't be parsed, if
 -- @x-buck2-ignore-build-tool-depends@ lists a tool that
--- @build-tool-depends@ doesn't, or if a library has
--- @x-buck2-run-tool-depends@. 
-buck2ToolFields :: ComponentKind -> BuildInfo -> Either String Buck2ToolFields
-buck2ToolFields kind bi = do
-  ignored <- fromMaybe [] <$> field ignoreField
-  runtime <- field runField
+-- @build-tool-depends@ doesn't, if a library has
+-- @x-buck2-run-tool-depends@, or if @x-buck2-splice-depends@
+-- lists a library that @build-depends@ doesn't.
+buck2Fields :: ComponentKind -> BuildInfo -> Either String Buck2Fields
+buck2Fields kind bi = do
+  ignored <- fromMaybe [] <$> field ignoreField tool
+  runtime <- field runField tool
+  splice <- fmap (map internal . concat) <$> field spliceField library
   case [t | t <- ignored, t `notElem` declaredBuildTools bi] of
     t : _ -> Left (ignoreField ++ " lists " ++ toolName t ++ ", which build-tool-depends doesn't")
     [] -> pure ()
   when (kind == Library && isJust runtime) $
     Left (runField ++ " is only for components that run")
-  pure (Buck2ToolFields ignored runtime)
+  -- A library in x-buck2-splice-depends must also be in build-depends,
+  -- which is what makes the component depend on it and link it.
+  case [l | l <- fromMaybe [] splice, l `notElem` libraryDeps bi] of
+    l : _ -> Left (spliceField ++ " lists " ++ libName l ++ ", which build-depends doesn't")
+    [] -> pure ()
+  pure (Buck2Fields ignored runtime splice)
   where
     ignoreField = "x-buck2-ignore-build-tool-depends"
     runField = "x-buck2-run-tool-depends"
-    -- The tools that a field lists, or Nothing if the component doesn't
+    spliceField = "x-buck2-splice-depends"
+    -- The items that a field lists, or Nothing if the component doesn't
     -- have the field.
-    field name = case [value | (key, value) <- customFieldsBI bi, map toLower key == name] of
+    field name item = case [value | (key, value) <- customFieldsBI bi, map toLower key == name] of
       [] -> Right Nothing
-      values -> Just . concat <$> traverse (traverse (tool name) . items) values
+      values -> Just . concat <$> traverse (traverse (parsed name item) . items) values
     items = filter (not . null) . map (dropWhile isSpace . dropWhileEnd isSpace) . splitOnCommas
     splitOnCommas s = case break (== ',') s of
       (item, _ : rest) -> item : splitOnCommas rest
       (item, []) -> [item]
-    tool name item = case eitherParsec item of
-      Right (ExeDependency pn exe _) -> Right (pn, exe)
-      Left err -> Left (name ++ ": can't read " ++ show item ++ ": " ++ err)
+    parsed name item s = either (\err -> Left (name ++ ": can't read " ++ show s ++ ": " ++ err)) (Right . item) (eitherParsec s)
+    tool (ExeDependency pn exe _) = (pn, exe)
+    library d = [(depPkgName d, ln) | ln <- NES.toList (depLibraries d)]
+    -- Before cabal-version 3.4, build-depends may name one of the package's
+    -- own sublibraries without the package's name, and Cabal reads it as
+    -- that sublibrary. A name here is read the same way.
+    internal l@(pn, LMainLibName)
+      | l `notElem` libraryDeps bi
+      , d : _ <- [d | d@(_, LSubLibName n) <- libraryDeps bi, unqualComponentNameToPackageName n == pn] =
+          d
+    internal l = l
     toolName (pn, exe) = prettyShow pn ++ ":" ++ prettyShow exe
+    libName (pn, LMainLibName) = prettyShow pn
+    libName (pn, LSubLibName n) = prettyShow pn ++ ":" ++ prettyShow n
 
 -- | The tools listed by a component's @build-tool-depends@ lists.
 declaredBuildTools :: BuildInfo -> [(PackageName, UnqualComponentName)]
