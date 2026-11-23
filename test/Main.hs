@@ -747,6 +747,13 @@ customSetup project = do
   appBzl <- readIn project ("app" </> "BUCK.cabal.bzl")
   assertContains "app BUCK.cabal.bzl" "'kind': 'executable'" appBzl
 
+  -- A build without --source-deps puts custom-dep in the store, so the plan
+  -- has it as installed. With --source-deps it must still be translated.
+  _ <- buck2 project ["--enable-custom-setup"]
+  fromStore <- buck2 project ["--source-deps", "--enable-custom-setup"]
+  assertContains "warning" "custom-dep-0.1 as if it had build-type: Simple" fromStore
+  assertNotContains "output" "skipping" fromStore
+
 -- | A project's @cabal-buck2.bzl@, with its overrides and defaults for the
 -- generated targets, is loaded by @packages.bzl@. Whichever of them the
 -- project doesn't define is given there as empty.
