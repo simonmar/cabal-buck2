@@ -62,7 +62,10 @@ data-files:
   buck2/**/*.KotlinCDLogger
   buck2/**/*.bat
   buck2/**/*.broken_json
-  buck2/**/*.bzl
+  buck2/*.bzl
+  buck2/platforms/**/*.bzl
+  buck2/prelude/**/*.bzl
+  buck2/toolchains/**/*.bzl
   buck2/**/*.config
   buck2/**/*.cpp
   buck2/**/*.erl

@@ -923,7 +923,10 @@ dataFilesTest = do
   where
     verbosity = mkVerbosity defaultVerbosityHandles silent
     notShipped path =
-      path `elem` ["flake.nix", "flake.lock", "perf-chart.svg", "CLAUDE.md", ".gitignore", "prelude/.gitignore", "prelude/toolchains/apple/xcode_version_checker/.gitignore"]
+      -- The buck2 build doesn't use the cabal.project and the cabal package
+      -- of haskell-buck2's persistent worker. Those are only for working on
+      -- the worker with cabal.
+      path `elem` ["flake.nix", "flake.lock", "perf-chart.svg", "CLAUDE.md", "cabal.project", ".gitignore", "prelude/.gitignore", "prelude/toolchains/apple/xcode_version_checker/.gitignore", "prelude/haskell/tools/worker/.gitignore", "prelude/haskell/tools/worker/buck2-ghc-worker.cabal"]
         || any (`isPrefixOf` path) ["tests/", ".github/", "prelude/toolchains/android/test/", "prelude/ide_integrations/visual_studio/assets/"]
     -- These are executable in git, but nothing that builds Haskell runs them.
     -- The Python ones are the main modules of python_bootstrap_binary
