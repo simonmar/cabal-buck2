@@ -235,23 +235,23 @@ translateCustomSetups verbosity mode distDirLayout plan = do
         ++ " (--enable-custom-setup), so its Setup.hs isn't run"
   return (InstallPlan.new (InstallPlan.planIndepGoals plan) (Graph.fromDistinctList (map fst pkgs)), Map.keysSet translated)
   where
-    -- Ensures that packages already put in the store by a different
-    -- invocation of 'cabal build' and therefore marked 'Installed'
-    -- are still converted when built by 'cabal buck2 --source-deps'.
     translate pkg = case pkg of
       InstallPlan.Configured elab -> translateElab InstallPlan.Configured elab
+      -- With --source-deps, a dependency that an earlier build put in the
+      -- cabal store is in the plan as installed. buck2 still builds it from
+      -- source, so it has to be translated too.
       InstallPlan.Installed elab -> translateElab InstallPlan.Installed elab
-      _ -> return (pkg, Nothing)
+      InstallPlan.PreExisting{} -> return (pkg, Nothing)
     translateElab con elab
       | isBuiltLocally mode elab
-        , PD.buildType desc == PD.Custom = do
-            dir <- packageSourceDir verbosity distDirLayout elab
-            hasConfigure <- doesFileExist (dir </> "configure")
-            let buildType = if hasConfigure then PD.Configure else PD.Simple
-            return (con elab{elabPkgDescription = desc{PD.buildTypeRaw = Just buildType}}, Just (packageId elab, buildType))
+      , PD.buildType desc == PD.Custom = do
+          dir <- packageSourceDir verbosity distDirLayout elab
+          hasConfigure <- doesFileExist (dir </> "configure")
+          let buildType = if hasConfigure then PD.Configure else PD.Simple
+          return (con elab{elabPkgDescription = desc{PD.buildTypeRaw = Just buildType}}, Just (packageId elab, buildType))
       | otherwise = return (con elab, Nothing)
-        where
-          desc = elabPkgDescription elab
+      where
+        desc = elabPkgDescription elab
 
 -- | Every package buck2 builds from source. Per-component elaboration gives
 -- each such package one 'ElaboratedConfiguredPackage' per component, all
