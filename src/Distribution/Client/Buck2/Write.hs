@@ -8,7 +8,7 @@ import Prelude ()
 
 import Data.List (stripPrefix)
 import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removeFile, removePathForcibly)
-import System.FilePath (takeDirectory, takeExtension, takeFileName, (</>))
+import System.FilePath (isRelative, normalise, takeDirectory, takeExtension, takeFileName, (</>))
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -216,7 +216,7 @@ withoutPrefix = fromMaybe <*> stripPrefix "cabal buck2: "
 writeOnePackage :: Verbosity -> FilePath -> [(BuiltPackage, (PackageTargets, [String]))] -> IO ()
 writeOnePackage _ _ [] = return ()
 writeOnePackage verbosity projectRoot sets@((BuiltPackage{bpDir = pkgDir, bpDescription = pkgDesc}, _) : _) = do
-  targets <- for sets $ \(pkg, (t, _)) -> (,) (bpPackageSet pkg) <$> withGeneratedHeaders verbosity projectRoot (packageName pkgDesc) t
+  targets <- for sets $ \(pkg, (t, _)) -> (,) (bpPackageSet pkg) <$> withGeneratedHeaders verbosity projectRoot pkgDir (packageName pkgDesc) t
   let pkgName = packageName pkgDesc
       bzlPath = pkgDir </> "BUCK.cabal.bzl"
       buckPath = pkgDir </> "BUCK"
@@ -292,15 +292,6 @@ writeAutogenBuck projectRoot pkgDir set pkgName targets
     headerCalls =
       concat
         [ [ call
-              "prebuilt_cxx_library"
-              [ ("name", str (generatedHeadersTarget c))
-              , ("header_only", VBool True)
-              , ("header_dirs", strList [generatedHeadersDir c])
-              , ("visibility", strList ["PUBLIC"])
-              ]
-          , -- The directory as such too, for whatever else needs the headers
-            -- (a generator, say, or the package's include-dirs).
-            call
               "export_file"
               [ ("name", str (generatedIncludeDirTarget c))
               , ("src", str (generatedHeadersDir c))
@@ -329,13 +320,9 @@ writeAutogenBuck projectRoot pkgDir set pkgName targets
       ]
 
 -- | Where the copies of the headers that a component's configure script
--- generated go, in the package's @cabal-buck2\/autogen@ directory, and the
--- target that has them.
+-- generated go, in the package's @cabal-buck2\/autogen@ directory.
 generatedHeadersDir :: SpecComponent -> FilePath
 generatedHeadersDir c = scName c </> "generated-include"
-
-generatedHeadersTarget :: SpecComponent -> String
-generatedHeadersTarget c = scName c ++ "-generated-headers"
 
 -- | The target of the directory of copies (as an include directory of the
 -- package, say).
@@ -345,9 +332,10 @@ generatedIncludeDirTarget c = scName c ++ "-generated-include"
 -- | The targets, with the headers that the components' configure scripts
 -- generated: those of the headers they declare that are in one of
 -- 'scGeneratedHeaderDirs' (the first, as an include path), and with a
--- warning, any others there.
-withGeneratedHeaders :: Verbosity -> FilePath -> PackageName -> PackageTargets -> IO PackageTargets
-withGeneratedHeaders verbosity projectRoot pkgName targets = do
+-- warning, any others there. Also with where each of a library's
+-- install-includes is (see 'installIncludeSource').
+withGeneratedHeaders :: Verbosity -> FilePath -> FilePath -> PackageName -> PackageTargets -> IO PackageTargets
+withGeneratedHeaders verbosity projectRoot pkgDir pkgName targets = do
   components <- for (specComponents spec) $ \c -> do
     declared <- fmap catMaybes . for (scDeclaredHeaders c) $ \header ->
       fmap (\dir -> (dir </> header, header)) <$> findM (\dir -> doesFileExist (projectRoot </> dir </> header)) (scGeneratedHeaderDirs c)
@@ -365,11 +353,29 @@ withGeneratedHeaders verbosity projectRoot pkgName targets = do
           ++ ", which "
           ++ scName c
           ++ " doesn't declare (in autogen-includes): used anyway"
-    return c{scGeneratedHeaders = declared ++ [(from, header) | (header, from) <- undeclared]}
+    let generated = declared ++ [(from, header) | (header, from) <- undeclared]
+    installs <- for (scInstallIncludes c) $ \(header, _) -> (,) header <$> installIncludeSource projectRoot pkgDir c (map snd generated) header
+    return c{scGeneratedHeaders = generated, scInstallIncludes = installs}
   return targets{ptSpec = spec{specComponents = components}}
   where
     spec = ptSpec targets
     findM p = foldr (\x rest -> p x >>= \b -> if b then return (Just x) else rest) (return Nothing)
+
+-- | Where one of a library's install-includes is. Cabal looks for it in the
+-- package's directory and then in each of its relative include directories,
+-- and in each of those, in the source and then in the build directory, where
+-- a configure script generates headers. This looks in all of the source
+-- directories first, and then among the generated headers (`generated`, by
+-- their paths in an include directory), which have only one directory.
+installIncludeSource :: FilePath -> FilePath -> SpecComponent -> [FilePath] -> FilePath -> IO InstallInclude
+installIncludeSource projectRoot pkgDir c generated header = do
+  let dirs = "." : filter isRelative (scIncludeDirs c)
+  found <- filterM (\dir -> doesFileExist (projectRoot </> pkgDir </> dir </> header)) dirs
+  return $ case found of
+    dir : _ -> IncludeInPackage (normalise (dir </> header))
+    []
+      | header `elem` generated -> IncludeGenerated
+      | otherwise -> IncludeProvided
 
 isHeader :: FilePath -> Bool
 isHeader f = takeExtension f `elem` [".h", ".hh", ".hpp", ".hxx", ".inc"]
@@ -438,11 +444,19 @@ componentValue c =
       ++ listField "asm_options" (scAsmOptions c)
       ++ listField "include_dirs" (scIncludeDirs c)
       ++ listField "includes" (scIncludes c)
+      ++ valuesField "install_includes" (map installIncludeValue (scInstallIncludes c))
       ++ [("exposed", VBool False) | not (scExposed c)]
       ++ listField "hsc_options" (scHscOptions c)
-      ++ [("generated_headers", str (generatedHeadersTarget c)) | not (null (scGeneratedHeaders c))]
       ++ [("generated_include_dir", str (generatedIncludeDirTarget c)) | not (null (scGeneratedHeaders c))]
       ++ listField "pkgconfig" (scPkgconfig c)
+
+installIncludeValue :: (FilePath, InstallInclude) -> Value
+installIncludeValue (header, source) =
+  VDict $
+    ("path", str header) : case source of
+      IncludeInPackage file -> [("src", str file)]
+      IncludeGenerated -> [("generated", VBool True)]
+      IncludeProvided -> []
 
 srcValue :: Src -> Value
 srcValue (SrcFile path) = str path

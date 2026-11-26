@@ -593,6 +593,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
     , scIncludes = map getSymbolicPath (includes bi)
+    , scInstallIncludes = [(getSymbolicPath h, IncludeProvided) | kind == Library, h <- installIncludes bi]
     , scExposed = True
     , scHscOptions = []
     , scGeneratedHeaderDirs = []

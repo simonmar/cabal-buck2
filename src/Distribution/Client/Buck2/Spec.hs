@@ -7,6 +7,7 @@ module Distribution.Client.Buck2.Spec
   , ComponentKind (..)
   , kindName
   , SpecComponent (..)
+  , InstallInclude (..)
   , Src (..)
   , SpecDep (..)
   , SpecReexport (..)
@@ -107,6 +108,11 @@ data SpecComponent = SpecComponent
   , scIncludes :: [FilePath]
   -- ^ The headers that what is compiled against the library includes
   -- (Cabal's @includes@).
+  , scInstallIncludes :: [(FilePath, InstallInclude)]
+  -- ^ Of a library: the headers that its package makes available to what
+  -- is compiled against it (Cabal's @install-includes@). Each is a path in
+  -- the package's include directory, with where the header is. Where it is
+  -- is found by "Distribution.Client.Buck2.Write".
   , scHscOptions :: [String]
   -- ^ Defines for the C compiler of @hsc2hs@, which say what the code is
   -- compiled for (GHC does this itself for Haskell code).
@@ -133,6 +139,16 @@ data SpecComponent = SpecComponent
 -- the package's @Setup.hs@ would have generated, which the project must
 -- provide (@--enable-custom-setup@).
 data Src = SrcFile FilePath | SrcAutogen String | SrcProvided
+
+-- | Where one of a library's @install-includes@ is.
+data InstallInclude
+  = -- | A file of the package, relative to its directory.
+    IncludeInPackage FilePath
+  | -- | One of the headers that the package's @configure@ script generated
+    -- ('scGeneratedHeaders').
+    IncludeGenerated
+  | -- | Neither: the build has to provide it.
+    IncludeProvided
 
 -- | A library a component depends on.
 data SpecDep = SpecDep
