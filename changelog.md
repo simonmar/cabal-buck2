@@ -47,6 +47,11 @@
     splices run in `x-buck2-splice-depends`, so that buck2
     can compile a Template Haskell module without waiting for the rest
     of its libraries to be linked.
+  * What is compiled against a library sees only the headers in its
+    `install-includes`, as it would with the library installed by Cabal.
+    Previously it saw all of the `include-dirs` of a library with C or
+    C++ sources, and none of those of other libraries. A library's
+    own C, C++ and Haskell code still sees all of them.
 
 # 0.5.0.0
 

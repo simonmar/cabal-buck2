@@ -7,6 +7,7 @@ module Distribution.Client.Buck2.Spec
   , ComponentKind (..)
   , kindName
   , SpecComponent (..)
+  , InstallInclude (..)
   , Src (..)
   , SpecDep (..)
   , SpecReexport (..)
@@ -98,6 +99,11 @@ data SpecComponent = SpecComponent
   , scAsmSources :: [FilePath]
   , scAsmOptions :: [String]
   , scIncludeDirs :: [FilePath]
+  , scInstallIncludes :: [(FilePath, InstallInclude)]
+  -- ^ Of a library: the headers that its package makes available to what
+  -- is compiled against it (Cabal's @install-includes@). Each is a path in
+  -- the package's include directory, with where the header is. Where it is
+  -- is found by "Distribution.Client.Buck2.Write".
   , scExposed :: Bool
   -- ^ Of a library: whether its package is exposed (Cabal's @exposed@).
   , scHscOptions :: [String]
@@ -117,6 +123,15 @@ data SpecComponent = SpecComponent
 -- the package's @Setup.hs@ would have generated, which the project must
 -- provide (@--enable-custom-setup@).
 data Src = SrcFile FilePath | SrcAutogen String | SrcProvided
+
+-- | Where one of a library's @install-includes@ is.
+data InstallInclude
+  = -- | A file of the package, relative to its directory.
+    IncludeInPackage FilePath
+  | -- | Not a file of the package. It is presumably one of the headers that
+    -- the package's @configure@ script generated (see
+    -- 'scGeneratedIncludeDirs').
+    IncludeNotInPackage
 
 -- | A library a component depends on.
 data SpecDep = SpecDep
