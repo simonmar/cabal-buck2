@@ -8,7 +8,7 @@ import Prelude ()
 
 import Data.List (stripPrefix)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.FilePath (isRelative, normalise, takeDirectory, takeFileName, (</>))
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -174,7 +174,8 @@ writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescriptio
   traverse_ (notice verbosity) (ptNotes targets)
   when (ptComponentCount targets == 0) $
     warn verbosity $ "cabal buck2: no buck2 targets generated for package " ++ prettyShow pkgName
-  writeFile bzlPath (renderGeneratedBzl pkgName (ptSpec targets))
+  spec <- withInstallIncludes pkgDir (ptSpec targets)
+  writeFile bzlPath (renderGeneratedBzl pkgName spec)
   buckExists <- doesFileExist buckPath
   unless buckExists $ writeFile buckPath renderBuckWrapper
   writeAutogenBuck pkgDir pkgName targets
@@ -185,6 +186,28 @@ writeOnePackage verbosity projectRoot (BuiltPackage{bpDir = pkgDir, bpDescriptio
       ++ show (ptComponentCount targets)
       ++ " component(s))"
       ++ (if buckExists then "" else ", created " ++ (rootRelativeDir projectRoot pkgDir </> "BUCK"))
+
+-- | The spec, with where each of its libraries' install-includes is.
+withInstallIncludes :: FilePath -> BuildSpec -> IO BuildSpec
+withInstallIncludes pkgDir spec = do
+  components <- for (specComponents spec) $ \c -> do
+    installs <- for (scInstallIncludes c) $ \(header, _) -> (,) header <$> installIncludeSource pkgDir c header
+    return c{scInstallIncludes = installs}
+  return spec{specComponents = components}
+
+-- | Where one of a library's install-includes is. Cabal looks for it in the
+-- package's directory and then in each of its relative include directories.
+-- In each of those, it looks in the source directory and then in the build
+-- directory, where a configure script generates headers. This looks only
+-- in the source directories. A header that isn't there is left to the
+-- directories of generated headers.
+installIncludeSource :: FilePath -> SpecComponent -> FilePath -> IO InstallInclude
+installIncludeSource pkgDir c header = do
+  let dirs = "." : filter isRelative (scIncludeDirs c)
+  found <- filterM (\dir -> doesFileExist (pkgDir </> dir </> header)) dirs
+  return $ case found of
+    dir : _ -> IncludeInPackage (normalise (dir </> header))
+    [] -> IncludeNotInPackage
 
 -- | Generate an @export_file()@ rule for each autogen file, so that
 -- the files can be easily referenced from somewhere else, including
@@ -281,10 +304,18 @@ componentValue c =
       ++ listField "asm_sources" (scAsmSources c)
       ++ listField "asm_options" (scAsmOptions c)
       ++ listField "include_dirs" (scIncludeDirs c)
+      ++ valuesField "install_includes" (map installIncludeValue (scInstallIncludes c))
       ++ [("exposed", VBool False) | not (scExposed c)]
       ++ listField "hsc_options" (scHscOptions c)
       ++ listField "generated_include_dirs" (scGeneratedIncludeDirs c)
       ++ listField "pkgconfig" (scPkgconfig c)
+
+installIncludeValue :: (FilePath, InstallInclude) -> Value
+installIncludeValue (header, source) =
+  VDict $
+    ("path", str header) : case source of
+      IncludeInPackage file -> [("src", str file)]
+      IncludeNotInPackage -> []
 
 srcValue :: Src -> Value
 srcValue (SrcFile path) = str path

@@ -87,6 +87,7 @@ tests =
   , ("buck2-unpack", buck2Unpack)
   , ("project-overrides", projectOverrides)
   , ("pkgconfig", pkgconfig)
+  , ("install-includes", installIncludes)
   , ("project-overrides", projectOverrides)
   , ("same-name", sameName)
   , ("normalise-paths", normalisePaths)
@@ -662,6 +663,21 @@ pkgconfig project = do
   spec "'cc_options': [\n                '-DFOO_ENABLED',\n            ]" bzl
   -- and for buck2 to run pkg-config for the C sources there are.
   spec "'pkgconfig': [\n                'foo',\n            ]" bzl
+
+-- | Each of a library's install-includes is in the spec with the file that
+-- Cabal would install, found as Cabal finds it: in the package's directory
+-- first, and then in its include-dirs.
+installIncludes :: Project -> IO ()
+installIncludes project = do
+  _ <- buck2 project []
+  bzl <- readIn project ("lib" </> "BUCK.cabal.bzl")
+  let spec = assertContains "lib/BUCK.cabal.bzl"
+  spec "{\n                    'path': 'inc.h',\n                    'src': 'include/inc.h',\n                }" bzl
+  spec "{\n                    'path': 'top.h',\n                    'src': 'top.h',\n                }" bzl
+  spec "{\n                    'path': 'sub/nested.h',\n                    'src': 'include/sub/nested.h',\n                }" bzl
+  -- A header that isn't in the package has no file. What is compiled
+  -- against the library looks for it in the directories of generated headers.
+  spec "{\n                    'path': 'generated.h',\n                }" bzl
 
 -- | The checkout of haskell-buck2 has to be for this release of cabal-buck2:
 -- if it is not, or doesn't say, the error says which branch is needed.

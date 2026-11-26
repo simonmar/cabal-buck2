@@ -1,0 +1,15 @@
+cabal-version:     3.0
+name:              lib
+version:           0.1
+build-type:        Simple
+
+library
+  exposed-modules:   L
+  build-depends:     base
+  include-dirs:      include
+  -- inc.h and sub/nested.h are in include/. top.h is in both the package's
+  -- directory and include/, and Cabal installs the one in the package's
+  -- directory. generated.h isn't in the package: a configure script would
+  -- have generated it.
+  install-includes:  inc.h, top.h, sub/nested.h, generated.h
+  default-language:  Haskell2010

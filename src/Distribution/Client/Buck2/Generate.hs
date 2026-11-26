@@ -72,6 +72,7 @@ import Distribution.PackageDescription
   , hcOptions
   , hsSourceDirs
   , includeDirs
+  , installIncludes
   , libExposed
   , otherModules
   , buildType
@@ -546,6 +547,7 @@ specComponent localIndex externalBuildTools kind name bi =
     , scCcOptions = ccOptions bi
     , scCxxOptions = cxxOptions bi
     , scIncludeDirs = map getSymbolicPath (includeDirs bi)
+    , scInstallIncludes = [(getSymbolicPath h, IncludeNotInPackage) | kind == Library, h <- installIncludes bi]
     , scExposed = True
     , scHscOptions = []
     , scGeneratedIncludeDirs = []
