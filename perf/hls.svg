@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 819 424" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+  <rect x="0" y="0" width="819" height="424" fill="#ffffff" />
+  <text x="24" y="32" font-size="19" font-weight="600" fill="#0b0b0b">haskell-language-server</text>
+  <text x="24" y="52" font-size="12.5" fill="#52514e">About 240 library modules in some 35 libraries &#8212; wall-clock seconds, unoptimised, 8 jobs</text>
+  <rect x="24" y="66" width="10" height="10" rx="2" fill="#2a78d6" />
+  <text x="40" y="75" font-size="12.5" fill="#52514e">cabal</text>
+  <rect x="94.0" y="66" width="10" height="10" rx="2" fill="#eb6834" />
+  <text x="110.0" y="75" font-size="12.5" fill="#52514e">buck2, per component</text>
+  <rect x="272.0" y="66" width="10" height="10" rx="2" fill="#1baf7a" />
+  <text x="288.0" y="75" font-size="12.5" fill="#52514e">buck2, per module</text>
+  <rect x="428.4" y="66" width="10" height="10" rx="2" fill="#e87ba4" />
+  <text x="444.4" y="75" font-size="12.5" fill="#52514e">cabal repl</text>
+  <text x="68" y="96" font-size="13" font-weight="600" fill="#0b0b0b">Full builds</text>
+  <g stroke="#e1e0d9" stroke-width="1">
+    <line x1="68" y1="360.0" x2="328" y2="360.0" />
+    <line x1="68" y1="318.3" x2="328" y2="318.3" />
+    <line x1="68" y1="276.7" x2="328" y2="276.7" />
+    <line x1="68" y1="235.0" x2="328" y2="235.0" />
+    <line x1="68" y1="193.3" x2="328" y2="193.3" />
+    <line x1="68" y1="151.7" x2="328" y2="151.7" />
+    <line x1="68" y1="110.0" x2="328" y2="110.0" />
+  </g>
+  <g font-size="11" fill="#898781" text-anchor="end">
+    <text x="60" y="363.5">0</text>
+    <text x="60" y="321.8">50</text>
+    <text x="60" y="280.2">100</text>
+    <text x="60" y="238.5">150</text>
+    <text x="60" y="196.8">200</text>
+    <text x="60" y="155.2">250</text>
+    <text x="60" y="113.5">300</text>
+  </g>
+  <line x1="68" y1="360" x2="328" y2="360" stroke="#c3c2b7" stroke-width="1" />
+  <path d="M86.0,360.0 V151.2 Q86.0,147.2 90.0,147.2 H104.0 Q108.0,147.2 108.0,151.2 V360.0 Z" fill="#2a78d6"><title>cabal, clean: 255.4s</title></path>
+  <text x="97.0" y="141.2" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">255s</text>
+  <path d="M111.0,360.0 V284.6 Q111.0,280.6 115.0,280.6 H129.0 Q133.0,280.6 133.0,284.6 V360.0 Z" fill="#eb6834"><title>buck2, per component, clean: 95.3s</title></path>
+  <text x="122.0" y="274.6" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">95s</text>
+  <path d="M136.0,360.0 V304.6 Q136.0,300.6 140.0,300.6 H154.0 Q158.0,300.6 158.0,304.6 V360.0 Z" fill="#1baf7a"><title>buck2, per module, clean: 71.3s</title></path>
+  <text x="147.0" y="294.6" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">71s</text>
+  <path d="M161.0,360.0 V302.8 Q161.0,298.8 165.0,298.8 H179.0 Q183.0,298.8 183.0,302.8 V360.0 Z" fill="#e87ba4"><title>cabal repl, clean: 73.5s</title></path>
+  <text x="172.0" y="292.8" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">74s</text>
+  <text x="134.5" y="380" font-size="12.5" text-anchor="middle" fill="#0b0b0b">clean</text>
+  <text x="134.5" y="396" font-size="11" text-anchor="middle" fill="#52514e">build everything</text>
+  <path d="M213.0,360.0 V186.7 Q213.0,182.7 217.0,182.7 H231.0 Q235.0,182.7 235.0,186.7 V360.0 Z" fill="#2a78d6"><title>cabal, hub-abi: 212.8s</title></path>
+  <text x="224.0" y="176.7" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">213s</text>
+  <path d="M238.0,360.0 V311.6 Q238.0,307.6 242.0,307.6 H256.0 Q260.0,307.6 260.0,311.6 V360.0 Z" fill="#eb6834"><title>buck2, per component, hub-abi: 62.9s</title></path>
+  <text x="249.0" y="301.6" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">63s</text>
+  <path d="M263.0,360.0 V326.0 Q263.0,322.0 267.0,322.0 H281.0 Q285.0,322.0 285.0,326.0 V360.0 Z" fill="#1baf7a"><title>buck2, per module, hub-abi: 45.6s</title></path>
+  <text x="274.0" y="316.0" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">46s</text>
+  <path d="M288.0,360.0 V357.3 Q288.0,353.3 292.0,353.3 H306.0 Q310.0,353.3 310.0,357.3 V360.0 Z" fill="#e87ba4"><title>cabal repl, hub-abi: 8.0s</title></path>
+  <text x="299.0" y="347.3" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">8.0s</text>
+  <text x="261.5" y="380" font-size="12.5" text-anchor="middle" fill="#0b0b0b">hub-abi</text>
+  <text x="261.5" y="396" font-size="11" text-anchor="middle" fill="#52514e">export added to a hub</text>
+  <text x="408" y="96" font-size="13" font-weight="600" fill="#0b0b0b">Small edits</text>
+  <g stroke="#e1e0d9" stroke-width="1">
+    <line x1="408" y1="360.0" x2="795" y2="360.0" />
+    <line x1="408" y1="318.3" x2="795" y2="318.3" />
+    <line x1="408" y1="276.7" x2="795" y2="276.7" />
+    <line x1="408" y1="235.0" x2="795" y2="235.0" />
+    <line x1="408" y1="193.3" x2="795" y2="193.3" />
+    <line x1="408" y1="151.7" x2="795" y2="151.7" />
+    <line x1="408" y1="110.0" x2="795" y2="110.0" />
+  </g>
+  <g font-size="11" fill="#898781" text-anchor="end">
+    <text x="400" y="363.5">0</text>
+    <text x="400" y="321.8">20</text>
+    <text x="400" y="280.2">40</text>
+    <text x="400" y="238.5">60</text>
+    <text x="400" y="196.8">80</text>
+    <text x="400" y="155.2">100</text>
+    <text x="400" y="113.5">120</text>
+  </g>
+  <line x1="408" y1="360" x2="795" y2="360" stroke="#c3c2b7" stroke-width="1" />
+  <path d="M426.0,360.0 V330.5 Q426.0,326.5 430.0,326.5 H444.0 Q448.0,326.5 448.0,330.5 V360.0 Z" fill="#2a78d6"><title>cabal, noop: 16.1s</title></path>
+  <text x="437.0" y="320.5" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">16s</text>
+  <text x="462.0" y="354.0" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">0s</text>
+  <text x="487.0" y="354.0" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">0s</text>
+  <path d="M501.0,360.0 V356.5 Q501.0,352.5 505.0,352.5 H519.0 Q523.0,352.5 523.0,356.5 V360.0 Z" fill="#e87ba4"><title>cabal repl, noop: 3.6s</title></path>
+  <text x="512.0" y="346.5" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">3.6s</text>
+  <text x="474.5" y="380" font-size="12.5" text-anchor="middle" fill="#0b0b0b">noop</text>
+  <text x="474.5" y="396" font-size="11" text-anchor="middle" fill="#52514e">nothing changed</text>
+  <path d="M553.0,360.0 V121.5 Q553.0,117.5 557.0,117.5 H571.0 Q575.0,117.5 575.0,121.5 V360.0 Z" fill="#2a78d6"><title>cabal, hub-comment: 116.4s</title></path>
+  <text x="564.0" y="111.5" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">116s</text>
+  <path d="M578.0,360.0 V336.7 Q578.0,332.7 582.0,332.7 H596.0 Q600.0,332.7 600.0,336.7 V360.0 Z" fill="#eb6834"><title>buck2, per component, hub-comment: 13.1s</title></path>
+  <text x="589.0" y="326.7" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">13s</text>
+  <path d="M603.0,360.0 V357.5 Q603.0,353.5 607.0,353.5 H621.0 Q625.0,353.5 625.0,357.5 V360.0 Z" fill="#1baf7a"><title>buck2, per module, hub-comment: 3.1s</title></path>
+  <text x="614.0" y="347.5" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">3.1s</text>
+  <path d="M628.0,360.0 V354.4 Q628.0,350.4 632.0,350.4 H646.0 Q650.0,350.4 650.0,354.4 V360.0 Z" fill="#e87ba4"><title>cabal repl, hub-comment: 4.6s</title></path>
+  <text x="639.0" y="344.4" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">4.6s</text>
+  <text x="601.5" y="380" font-size="12.5" text-anchor="middle" fill="#0b0b0b">hub-comment</text>
+  <text x="601.5" y="396" font-size="11" text-anchor="middle" fill="#52514e">comment in a hub</text>
+  <path d="M680.0,360.0 V316.1 Q680.0,312.1 684.0,312.1 H698.0 Q702.0,312.1 702.0,316.1 V360.0 Z" fill="#2a78d6"><title>cabal, leaf: 23.0s</title></path>
+  <text x="691.0" y="306.1" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">23s</text>
+  <path d="M705.0,360.0 V358.2 Q705.0,354.2 709.0,354.2 H723.0 Q727.0,354.2 727.0,358.2 V360.0 Z" fill="#eb6834"><title>buck2, per component, leaf: 2.8s</title></path>
+  <text x="716.0" y="348.2" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">2.8s</text>
+  <path d="M730.0,360.0 V360.0 Q730.0,357.7 732.3,357.7 H749.7 Q752.0,357.7 752.0,360.0 V360.0 Z" fill="#1baf7a"><title>buck2, per module, leaf: 1.1s</title></path>
+  <text x="741.0" y="351.7" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">1.1s</text>
+  <path d="M755.0,360.0 V356.7 Q755.0,352.7 759.0,352.7 H773.0 Q777.0,352.7 777.0,356.7 V360.0 Z" fill="#e87ba4"><title>cabal repl, leaf: 3.5s</title></path>
+  <text x="766.0" y="346.7" font-size="10.5" text-anchor="middle" fill="#52514e" font-variant-numeric="tabular-nums">3.5s</text>
+  <text x="728.5" y="380" font-size="12.5" text-anchor="middle" fill="#0b0b0b">leaf</text>
+  <text x="728.5" y="396" font-size="11" text-anchor="middle" fill="#52514e">edit to a leaf module</text>
+</svg>
