@@ -1,57 +1,64 @@
 # 0.6.0.0
 
   * For `cabal-install` version 3.18
-  * The way the C/C++ compiler is chosen has changed. Previously it
-    always defaulted to `clang`/`clang++` because those are the Buck2
-    toolchain defaults. Now we use the `--with-gcc` option to Cabal if
-    supplied, or GHC's "C compiler command" if it uses an absolute path,
-    or otherwise the `clang`/`clang++` default as before.
-  * The path to GHC, its tools and the C/C++ compilers are now fixed
-    when you run `cabal buck2` rather than being found via `PATH`
-    (see https://github.com/simonmar/haskell-buck2/issues/29)
-  * An executable with `enable_profiling = True` now links its libraries'
-    profiled archives whatever the build mode, rather than their
-    non-profiled shared libraries in a dev build
-    (see https://github.com/simonmar/haskell-buck2/issues/30)
-  * The mode flags (-O etc.) now come before the package-specific
-    flags (from `ghc-options` etc.) on the GHC command line.
-  * A package's `data-files` are now found by `getDataFileName` when
-    its code runs in the buck2 build. This includes the data files of
-    the packages it depends on that buck2 builds. Haskell rules have a
-    `data_dirs` attribute for this, and `cabal-buck2/packages.bzl` has
-    `DATA_PACKAGES`.
-  * C and C++ targets are rebuilt when `cabal buck2` finds a different
-    C toolchain, with or without an action cache: the C tools are now run
-    from a directory named by the C toolchain's fingerprint
-    (`third-party/haskell/toolchain/<role>/<fingerprint>/`).
-  * `cabal buck2 --cache` writes its settings to `.buckconfig.local`
-    rather than `.buckconfig`, which is usually committed. A block that
-    an earlier version wrote to `.buckconfig` is moved out the next time
-    `--cache` or `--no-cache` is given.
-  * `--source-deps` supports cabal.project `source-repository-package`s.
-  * The Buck2 support code now comes with `cabal-buck2`. If the project
-    has no `buck2/` directory, `cabal buck2` creates one from its own
-    copy, and replaces it after an upgrade. A git checkout of
-    haskell-buck2 in `buck2/` still works as before.
-  * A project's `cabal-buck2.bzl` can give `DEFAULTS` for the generated
-    targets, for every package or for one package, as well as
-    `OVERRIDES` for individual components
-    (see https://github.com/simonmar/cabal-buck2/issues/18).
-  * A test-suite, benchmark or executable that only runs a tool of its
-    `build-tool-depends` can say so with
-    `x-buck2-ignore-build-tool-depends` and
-    `x-buck2-run-tool-depends`, so that buck2 builds the tool once
-    rather than again for the execution platform
-    (see https://github.com/simonmar/haskell-buck2/issues/62).
-  * A component can list the libraries whose code its Template Haskell
-    splices run in `x-buck2-splice-depends`, so that buck2
-    can compile a Template Haskell module without waiting for the rest
-    of its libraries to be linked.
-  * What is compiled against a library sees only the headers in its
-    `install-includes`, as it would with the library installed by Cabal.
-    Previously it saw all of the `include-dirs` of a library with C or
-    C++ sources, and none of those of other libraries. A library's
-    own C, C++ and Haskell code still sees all of them.
+  * **New features**
+    * There is now support for per-module compilation using a GHC
+      worker. For details see the section on "Per-module compilation" in
+      the README.
+    * The Buck2 support code now comes with `cabal-buck2` and is
+      unpacked into `buck2/` automatically if it doesn't exist. The
+      contents of `buck2/` will be upgraded if you switch to a newer
+      version of `cabal-buck2` later. A git checkout of haskell-buck2
+      in `buck2/` still works as before.
+    * A package's `data-files` are now found by `getDataFileName` when
+      its code runs in the buck2 build. This includes the data files of
+      the packages it depends on that buck2 builds. Haskell rules have a
+      `data_dirs` attribute for this, and `cabal-buck2/packages.bzl` has
+      `DATA_PACKAGES`.
+    * `--source-deps` supports cabal.project `source-repository-package`s.
+    * A project's `cabal-buck2.bzl` can give `DEFAULTS` for the generated
+      targets, for every package or for one package, as well as
+      `OVERRIDES` for individual components
+      (see https://github.com/simonmar/cabal-buck2/issues/18).
+    * A test-suite, benchmark or executable that only runs a tool of its
+      `build-tool-depends` can say so with
+      `x-buck2-ignore-build-tool-depends` and
+      `x-buck2-run-tool-depends`, so that buck2 builds the tool once
+      rather than again for the execution platform
+      (see https://github.com/simonmar/haskell-buck2/issues/62).
+    * A component can list the libraries whose code its Template Haskell
+      splices run in `x-buck2-splice-depends`, so that buck2
+      can compile a Template Haskell module without waiting for the rest
+      of its libraries to be linked.
+  * **Changes**
+    * `cabal buck2 --cache` writes its settings to `.buckconfig.local`
+      rather than `.buckconfig`, which is usually committed. A block that
+      an earlier version wrote to `.buckconfig` is moved out the next time
+      `--cache` or `--no-cache` is given.
+    * The way the C/C++ compiler is chosen has changed. Previously it
+      always defaulted to `clang`/`clang++` because those are the Buck2
+      toolchain defaults. Now we use the `--with-gcc` option to Cabal if
+      supplied, or GHC's "C compiler command" if it uses an absolute path,
+      or otherwise the `clang`/`clang++` default as before.
+    * The path to GHC, its tools and the C/C++ compilers are now fixed
+      when you run `cabal buck2` rather than being found via `PATH`
+      (see https://github.com/simonmar/haskell-buck2/issues/29)
+  * **Fixes**
+    * An executable with `enable_profiling = True` now links its libraries'
+      profiled archives whatever the build mode, rather than their
+      non-profiled shared libraries in a dev build
+      (see https://github.com/simonmar/haskell-buck2/issues/30)
+    * The mode flags (-O etc.) now come before the package-specific
+      flags (from `ghc-options` etc.) on the GHC command line.
+    * C and C++ targets are rebuilt when `cabal buck2` finds a different
+      C toolchain, with or without an action cache: the C tools are now run
+      from a directory named by the C toolchain's fingerprint
+      (`third-party/haskell/toolchain/<role>/<fingerprint>/`).
+    * What is compiled against a library sees only the headers in its
+      `install-includes`, as it would with the library installed by Cabal.
+      Previously it saw all of the `include-dirs` of a library with C or
+      C++ sources, and none of those of other libraries. A library's
+      own C, C++ and Haskell code still sees all of them.
 
 # 0.5.0.0
 
