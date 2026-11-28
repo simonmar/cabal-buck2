@@ -630,6 +630,207 @@ amazonka:
 
 </details>
 
+## The standard comparison
+
+`bench/compare.py` compares cabal and buck2 on a project, in the same way
+each time, so that results from different versions and machines can be put
+side by side. A JSON file describes each project: where to get it, which of
+its packages to build, and which modules to edit. There are three:
+
+* `bench/amazonka.json`: a subset of
+  [amazonka](https://github.com/brendanhay/amazonka) with about 4,500
+  modules. It is `amazonka-core`, `amazonka`, and the services it needs (SSO
+  and STS), together with EC2, SageMaker, QuickSight, S3 and DynamoDB, the
+  largest of the generated services.
+* `bench/cabal.json`: the [Cabal](https://github.com/haskell/cabal) project
+  itself, as in the experiment above, without `cabal-testsuite`, whose
+  `build-type: Custom` buck2 can't build.
+* `bench/hls.json`: [haskell-language-server](https://github.com/haskell/haskell-language-server),
+  with about 240 library modules in some 35 libraries: a chain from
+  `hls-graph` through `ghcide` to `hls-plugin-api`, and then a library for
+  each plugin. Unlike amazonka's few large packages, it has the shape where
+  compiling module by module lets libraries start before the ones they
+  depend on are finished.
+
+It compares four ways of building the project, all without optimisation and
+running the same number of jobs at once:
+
+* **cabal**: `cabal build`, with GHC's `-jsem` semaphore, so that modules of
+  the same package compile in parallel too.
+* **buck2-component**: buck2, compiling each component with one `ghc
+  --make`. GHC compiles a component's modules one at a time, since buck2 may
+  be running other compiles too.
+* **buck2-module**: buck2, compiling each module as an action of its own,
+  in the persistent worker.
+* **repl**: `cabal repl --enable-multi-repl` of the components that the
+  project's JSON lists under `repl`, for the edit-and-reload loop. They are
+  the components that the other ways build, apart from a few that a
+  multi-repl can't load (see the notes on the results). It loads bytecode
+  rather than making objects, so it does less work than the other ways
+  even then: it generates no code and links nothing.
+
+In each one, it times:
+
+* **clean**: a build from nothing. For repl, loading the components. For
+  buck2, `cabal buck2` is timed separately (**generate**).
+* **noop**: building again with nothing changed.
+* **hub-comment**: a comment added to a module that most of the project
+  imports. Nothing that imports it should have to compile again.
+* **hub-abi**: a new export added to the same module. Everything that
+  imports it compiles again.
+* **leaf**: a new definition added to a module that nothing imports.
+
+For buck2-module, it times the clean build and each edit twice: building
+everything, and building only the interfaces (the `[interfaces]`
+sub-targets of every component), which is what you need to know whether
+the code typechecks. Building the interfaces skips the linking, but still
+generates each module's code, since a module's interface and object come
+from the same compile. (For buck2-component the
+interfaces come from the same `ghc --make` action as the library, so they
+take as long.) For repl, each edit is timed with `:reload`.
+
+The project's dependencies are built first, and every way uses the same
+ones, so that their build isn't timed. The scenarios that take seconds
+(noop, hub-comment, leaf) run three times, and the table gives the median.
+Those that take minutes (clean, hub-abi) vary by only a few percent from
+run to run, so they run once (`--heavy-repeats` changes that).
+
+Each way builds its own copy of the project, and they take turns: each run
+of a scenario is made in every way before the next starts, and each run
+starts with the next way. On a laptop, the CPU's speed can vary a lot from
+run to run, with its temperature or power limit, and taking turns makes a
+slow spell fall on all of the ways. A single run of the heavy scenarios can
+still put either way ahead, so `--heavy-repeats 3` is safer there. (repl
+runs after the others, since its session would hold its memory while they
+build.) Besides the wall-clock time, each run records the CPU time the
+whole machine spent busy, which includes buck2's daemon and workers. Set
+against the wall-clock time, it shows whether a way is slower because it
+does more work or because it keeps fewer CPUs busy. It changes with the
+CPU's speed too, so it compares the ways within one run, not across runs.
+The machine should otherwise be idle.
+
+Before a project is benchmarked, its components should say which build
+tools they only run (`x-buck2-run-tool-depends`) and which libraries their
+splices run (`x-buck2-template-haskell-depends`), as a project built with
+buck2 would. Without them, buck2 builds tools that are only run in a second
+configuration, and every splice loads all of its component's dependencies,
+which makes the buck2 builds slower than they need to be. A project's JSON
+adds the fields with patches to its `.cabal` files (see `bench/hls.json`).
+
+To run it, with GHC, cabal, cabal-buck2, buck2 and the worker on `PATH`:
+
+```
+bench/compare.py bench/amazonka.json ~/bench-work/amazonka --rules path/to/haskell-buck2 --jobs 8
+```
+
+It prints a table of the results, and writes them, with the versions of the
+tools, to `results.json` in the work directory. The logs of every command
+are there too. `--configs` and `--scenarios` run only some of the ways and
+scenarios (`--scenarios "clean [interfaces]"`, say), adding to the results
+already there.
+
+### Results
+
+These were measured on a laptop with an 8-core AMD Ryzen 7 7840U and 60 GB
+of memory, with `--jobs 8`, GHC 9.12.4, cabal-install 3.18.1.0 and buck2
+2026-10-14. buck2 ran haskell-buck2's rules at 149be4c0609d, with
+`buck2-ghc-worker`.
+
+amazonka:
+
+| | cabal | buck2-component | buck2-module | repl |
+|---|---|---|---|---|
+| generate | | 5.7s | 5.6s | |
+| clean | 139.5s | 182.2s | 118.0s | 89.6s |
+| clean [interfaces] | | | 166.2s* | |
+| noop | 3.3s | 0.0s | 0.0s | 1.6s |
+| hub-comment | 17.9s | 9.4s | 2.4s | 1.7s |
+| hub-comment [interfaces] | | | 2.5s | |
+| hub-abi | 246.0s | 238.6s | 217.5s | 69.7s |
+| hub-abi [interfaces] | | | 192.0s | |
+| leaf | 6.9s | 0.5s | 0.4s | 1.6s |
+| leaf [interfaces] | | | 0.5s | |
+
+Its CPU time, in CPU-seconds:
+
+| | cabal | buck2-component | buck2-module | repl |
+|---|---|---|---|---|
+| clean | 1159 | 850 | 1121 | 845 |
+| hub-abi | 2484 | 1232 | 2624 | 794 |
+| hub-abi [interfaces] | | | 2225 | |
+
+haskell-language-server:
+
+| | cabal | buck2-component | buck2-module | repl |
+|---|---|---|---|---|
+| generate | | 14.9s | 15.2s | |
+| clean | 255.4s | 95.3s | 71.3s | 73.5s |
+| clean [interfaces] | | | 53.4s | |
+| noop | 16.1s | 0.0s | 0.0s | 3.6s |
+| hub-comment | 116.4s | 13.1s | 3.1s | 4.6s |
+| hub-comment [interfaces] | | | 3.1s | |
+| hub-abi | 212.8s | 62.9s | 45.6s | 8.0s |
+| hub-abi [interfaces] | | | 19.8s | |
+| leaf | 23.0s | 2.8s | 1.1s | 3.5s |
+
+The Cabal project:
+
+| | cabal | buck2-component | buck2-module | repl |
+|---|---|---|---|---|
+| generate | | 4.5s | 2.7s | |
+| clean | 108.6s | 90.9s | 70.0s | 39.7s |
+| clean [interfaces] | | | 59.8s | |
+| noop | 2.8s | 0.0s | 0.0s | 0.9s |
+| hub-comment | 22.7s | 7.0s | 2.4s | 1.7s |
+| hub-comment [interfaces] | | | 2.3s | |
+| hub-abi | 47.3s | 30.5s | 20.2s | 5.7s |
+| hub-abi [interfaces] | | | 10.8s | |
+| leaf | 5.9s | 0.2s | 0.3s | 0.9s |
+| leaf [interfaces] | | | 0.0s | |
+
+Notes on these results:
+
+* The repl columns for HLS and the Cabal project come from a later run
+  than the rest, which loaded all their components. Five of HLS's 74 are
+  left out: `func-test`, `wrapper-test`, `ghcide-tests`, `ghcide-bench-test`
+  and the benchmark run an executable of the project as a build tool, and
+  a multi-repl can't build that executable while it loads the executable's
+  library. amazonka's other ways build only its libraries, which is what
+  its repl loads.
+* The `clean [interfaces]` rows come from a later run than the rest. For
+  amazonka (*), the machine was slower then: in that run, buck2-module's
+  clean build took 168.3s, against 118.0s above, and `clean [interfaces]`
+  took 166.2s. amazonka has nothing to link but its libraries, so building
+  only the interfaces saves it almost nothing.
+
+* The heavy scenarios are quite sensitive to the machine's load and
+  clock speed. On amazonka, cabal's hub-abi took between 167s and 246s for
+  the same work, and a single run of each way could put either ahead. So
+  amazonka's hub-abi row for cabal and buck2-module is the mean of two
+  runs of each, made alternately, after the rest of the table. The rest
+  of that row, and `hub-abi [interfaces]`, are from the benchmark's own
+  single run.
+* amazonka is buck2's worst case: a few large packages, whose modules
+  cabal already compiles in parallel with `-jsem`. buck2-module does about
+  the same work as cabal there and keeps more CPUs busy, so it comes out
+  ahead by 10-15% on clean and hub-abi. HLS's long chain of libraries is
+  where it does best.
+* cabal's noop and hub-comment times on HLS are mostly its fixed cost for
+  each of its ~70 components, since only one module changes. The first
+  hub-comment run after a clean build also recompiles a Template Haskell
+  module and relinks 36 executables, in both cabal and buck2-component;
+  the median leaves that out.
+* HLS's `hub-abi [interfaces]` took 40s before its components listed the
+  libraries their splices run: three Template Haskell modules on the
+  critical path took 24s of it, as their splices loaded the libraries of
+  all their dependencies. With the lists it takes 20s, and most of that
+  is still on the way to a splice. The semantic-tokens plugin's splice
+  runs code from its own modules, which import ghcide, so it waits for the
+  edited ghcide to be compiled to objects and linked: 19s of recompiles
+  through ghcide's chain of modules, 2.5s to link and register it, then 5s
+  for the splice's module.
+* HLS's leaf is in an executable, which has no `[interfaces]` sub-target.
+
 # Limitations
 
 ## It's an external command, not builtin to `cabal-install`
