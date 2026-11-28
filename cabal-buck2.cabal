@@ -73,7 +73,7 @@ data-files:
   buck2/**/*.go
   buck2/**/*.hrl
   buck2/**/*.in
-  buck2/**/*.json
+  buck2/prelude/**/*.json
   buck2/**/*.m
   buck2/**/*.mobileprovision
   buck2/**/*.props
