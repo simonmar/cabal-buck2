@@ -1,3 +1,7 @@
+# 0.7.0.0
+
+  * For `cabal-install` version 3.18
+
 # 0.6.0.0
 
   * For `cabal-install` version 3.18
