@@ -1,6 +1,6 @@
 cabal-version:      3.8
 name:               cabal-buck2
-version:            0.6.0.0
+version:            0.7.0.0
 
 -- To ship a new version:
 --   - bump the version above
